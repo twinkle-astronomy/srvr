@@ -9,6 +9,8 @@ services:
     volumes:
       - .:/app
       - bash-history:/home/dev/.bash_history_dir
+    ports:
+      - "8080:8080"
     command:
       "sleep infinity"
 

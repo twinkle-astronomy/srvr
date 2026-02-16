@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     xz-utils \
     git \
+    fonts-dejavu \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 ARG UID=1000

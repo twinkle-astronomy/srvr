@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:docs.trmnl.com)",
+      "WebFetch(domain:github.com)",
+      "mcp__ide__getDiagnostics",
+      "Bash(cargo check:*)",
+      "WebFetch(domain:dioxuslabs.com)",
+      "Bash(cargo build:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:trmnl.com)"
+    ]
+  }
+}
