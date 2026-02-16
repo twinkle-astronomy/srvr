@@ -1,0 +1,17 @@
+services:
+  srvr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - .:/app
+      - bash-history:/home/dev/.bash_history_dir
+    command:
+      "sleep infinity"
+
+
+volumes:
+  bash-history:
