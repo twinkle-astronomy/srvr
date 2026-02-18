@@ -33,6 +33,7 @@ struct DisplayResponse {
     // special_function: String,
     // #[serde(skip_serializing_if = "Option::is_none")]
     // action: Option<String>,
+    maximum_compatibility: bool,
 }
 
 #[derive(Serialize)]
@@ -160,20 +161,22 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let timestamp = Utc::now().timestamp();
     let width_param = device_width.unwrap_or("800");
     let height_param = device_height.unwrap_or("480");
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&t={}",
-        host, width_param, height_param, timestamp);
+    let fw_param = fw_version.unwrap_or("unknown");
+    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, width_param, height_param, fw_param, timestamp);
 
     // TODO: Implement actual device lookup and image generation
     let response = DisplayResponse {
         // status: 200,
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 60,
+        refresh_rate: 10,
         // reset_firmware: false,
         update_firmware: false,
         // firmware_url: None,
         // special_function: "identify".to_string(),
         // action: Some("identify".to_string()),
+        maximum_compatibility: true,
     };
 
     // Log response
@@ -192,9 +195,10 @@ async fn display_current_handler(headers: HeaderMap) -> impl IntoResponse {
         }))).into_response(),
     };
 
-    // Get device dimensions if available
+    // Get device dimensions and firmware version if available
     let device_width = headers.get("Width").and_then(|h| h.to_str().ok()).unwrap_or("800");
     let device_height = headers.get("Height").and_then(|h| h.to_str().ok()).unwrap_or("480");
+    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok()).unwrap_or("unknown");
 
     // Get the host from the request headers to build the correct image URL
     let host = headers.get("host")
@@ -203,8 +207,8 @@ async fn display_current_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&t={}",
-        host, device_width, device_height, timestamp);
+    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, device_width, device_height, fw_version, timestamp);
 
     // TODO: Implement actual current screen lookup
     let response = DisplayCurrentResponse {
@@ -252,9 +256,10 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     // TODO: Implement actual device setup and registration
     info!("Setup request - ID: {}, Model: {}", device_id, device_model);
 
-    // Get device dimensions if available
+    // Get device dimensions and firmware version if available
     let device_width = headers.get("Width").and_then(|h| h.to_str().ok()).unwrap_or("800");
     let device_height = headers.get("Height").and_then(|h| h.to_str().ok()).unwrap_or("480");
+    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok()).unwrap_or("unknown");
 
     // Get the host from the request headers to build the correct image URL
     let host = headers.get("host")
@@ -263,8 +268,8 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&t={}",
-        host, device_width, device_height, timestamp);
+    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, device_width, device_height, fw_version, timestamp);
 
     // Mock response - in production, this would check if device exists
     let response = SetupResponse {
@@ -284,13 +289,35 @@ struct RenderQuery {
     width: u32,
     #[serde(default = "default_height")]
     height: u32,
+    #[serde(default = "default_fw")]
+    fw: String,
 }
 
 fn default_width() -> u32 { 800 }
 fn default_height() -> u32 { 480 }
+fn default_fw() -> String { "unknown".to_string() }
 
 // GET /render/screen.bmp - Render screen image
 async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
     info!("=== GET /render/screen.bmp - {}x{} ===", params.width, params.height);
-    renderer::render_screen(params.width, params.height).await
+
+    let prometheus_url = std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
+    let client = prometheus_http_query::Client::try_from(prometheus_url.as_str()).unwrap();
+    let query = r#"scrape_duration_seconds{instance="localhost:9090", job="prometheus"}"#;
+
+    let scrape_duration_display = match client.query(query).get().await {
+        Ok(response) => {
+            response.data().as_vector()
+                .and_then(|v| v.first().map(|sample| format!("{}s", sample.sample().value())))
+                .unwrap_or_else(|| "N/A".to_string())
+        }
+        Err(e) => {
+            info!("Failed to query Prometheus: {}", e);
+            "N/A".to_string()
+        }
+    };
+
+    info!("Prometheus scrape_duration_seconds: {}", scrape_duration_display);
+
+    renderer::render_screen(params.width, params.height, scrape_duration_display, params.fw).await
 }

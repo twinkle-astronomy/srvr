@@ -7,7 +7,7 @@ use liquid::ParserBuilder;
 use tracing::info;
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(width: u32, height: u32) -> impl IntoResponse {
+pub async fn render_screen(width: u32, height: u32, scrape_duration: String, fw_version: String) -> impl IntoResponse {
     info!("=== Rendering screen image: {}x{} ===", width, height);
 
     // Get current time
@@ -31,19 +31,19 @@ pub async fn render_screen(width: u32, height: u32) -> impl IntoResponse {
             {{ time }}
         </text>
 
-        <!-- Main content text -->
-        <text x="400" y="240" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="48" font-weight="bold" text-anchor="middle" fill="black">
-            Hello World!
+        <!-- Metric label -->
+        <text x="400" y="220" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="black">
+            Prometheus Scrape Duration
         </text>
 
-        <!-- Subtitle -->
-        <text x="400" y="300" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="28" text-anchor="middle" fill="black">
-            800x480 e-ink screen
+        <!-- Metric value -->
+        <text x="400" y="290" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="64" font-weight="bold" text-anchor="middle" fill="black">
+            {{ scrape_duration }}
         </text>
 
         <!-- Info text -->
         <text x="400" y="350" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="20" text-anchor="middle" fill="black">
-            Powered by Rust + Liquid
+            scrape_duration_seconds{job=&quot;prometheus&quot;}
         </text>
 
         <!-- Black footer bar -->
@@ -51,12 +51,12 @@ pub async fn render_screen(width: u32, height: u32) -> impl IntoResponse {
 
         <!-- Footer text (white on black) -->
         <text x="400" y="{{ footer_text_y }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
-            {{ date }} - 1-bit monochrome BMP
+            {{ date }} | FW {{ fw_version }}
         </text>
     </svg>"#;
 
     // Render SVG from template
-    let svg_data = match render_svg_template(svg_template, width, height, &now) {
+    let svg_data = match render_svg_template(svg_template, width, height, &now, &scrape_duration, &fw_version) {
         Ok(svg) => svg,
         Err(e) => {
             return (
@@ -86,7 +86,7 @@ pub async fn render_screen(width: u32, height: u32) -> impl IntoResponse {
 }
 
 /// Renders a Liquid template to SVG string
-fn render_svg_template(template_str: &str, width: u32, height: u32, now: &chrono::DateTime<Utc>) -> Result<String, String> {
+fn render_svg_template(template_str: &str, width: u32, height: u32, now: &chrono::DateTime<Utc>, scrape_duration: &str, fw_version: &str) -> Result<String, String> {
     let parser = ParserBuilder::with_stdlib()
         .build()
         .map_err(|e| format!("Failed to build parser: {}", e))?;
@@ -102,6 +102,8 @@ fn render_svg_template(template_str: &str, width: u32, height: u32, now: &chrono
         "footer_text_y": (height - 30).to_string(),
         "time": now.format("%H:%M:%S UTC").to_string(),
         "date": now.format("%Y-%m-%d").to_string(),
+        "scrape_duration": scrape_duration.to_string(),
+        "fw_version": fw_version.to_string(),
     });
 
     template.render(&globals)
