@@ -5,3 +5,21 @@ scrape_configs:
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
+  - job_name: "srvr"
+    static_configs:
+      - targets: ["srvr:8080"]
+
+  - job_name: 'sensors'
+    static_configs:
+      - targets:
+        - 'pico-climate-e3917228.lan:80'
+        labels:
+          location: "Front Porch"
+      - targets:
+        - 'pico-climate-93749332.lan:80'
+        labels:
+          location: "Chris Dev"
+      - targets:
+        - 'pico-climate-93818635.lan:80'
+        labels:
+          location: "Chris Bedroom"

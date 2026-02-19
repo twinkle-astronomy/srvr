@@ -4,12 +4,9 @@ use axum::{
 };
 use chrono::Utc;
 use liquid::ParserBuilder;
-use tracing::info;
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
 pub async fn render_screen(width: u32, height: u32, scrape_duration: String, fw_version: String) -> impl IntoResponse {
-    info!("=== Rendering screen image: {}x{} ===", width, height);
-
     // Get current time
     let now = Utc::now();
 
@@ -33,17 +30,12 @@ pub async fn render_screen(width: u32, height: u32, scrape_duration: String, fw_
 
         <!-- Metric label -->
         <text x="400" y="220" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="black">
-            Prometheus Scrape Duration
+            Front Porch
         </text>
 
         <!-- Metric value -->
         <text x="400" y="290" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="64" font-weight="bold" text-anchor="middle" fill="black">
             {{ scrape_duration }}
-        </text>
-
-        <!-- Info text -->
-        <text x="400" y="350" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="20" text-anchor="middle" fill="black">
-            scrape_duration_seconds{job=&quot;prometheus&quot;}
         </text>
 
         <!-- Black footer bar -->
@@ -68,8 +60,7 @@ pub async fn render_screen(width: u32, height: u32, scrape_duration: String, fw_
 
     // Convert SVG to 1-bit BMP
     match svg_to_bmp(&svg_data) {
-        Ok((bmp_data, bmp_width, bmp_height)) => {
-            info!("Generated 1-bit BMP: {}x{}, {} bytes", bmp_width, bmp_height, bmp_data.len());
+        Ok((bmp_data, _, _)) => {
             (
                 StatusCode::OK,
                 [("Content-Type", "image/bmp")],

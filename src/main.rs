@@ -1,3 +1,5 @@
+use std::{f32, num::ParseFloatError};
+
 use axum::{
     extract::{Json, Query},
     http::{HeaderMap, StatusCode},
@@ -13,6 +15,8 @@ use tower_http::{
 };
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use axum_prometheus::PrometheusMetricLayer;
 
 mod renderer;
 
@@ -67,6 +71,7 @@ struct SetupResponse {
 
 #[tokio::main]
 async fn main() {
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
     // Initialize tracing subscriber to output to stdout
     tracing_subscriber::registry()
         .with(
@@ -89,7 +94,9 @@ async fn main() {
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
+        .route("/metrics", get(|| async move { metric_handle.render() }))
         .layer(TraceLayer::new_for_http())
+        .layer(prometheus_layer)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -114,6 +121,19 @@ async fn main() {
 
 async fn root() -> &'static str {
     "TRMNL eink device server"
+}
+
+fn percent_charged(battery_voltage: &str) -> Result<f32,  ParseFloatError> {
+    let battery_voltage: f32 = battery_voltage.parse()?;
+    let pct_charged = (battery_voltage - 3.) / 0.012;
+
+    Ok(match pct_charged {
+        88.0..=f32::INFINITY => 100.0,
+        85.0..88.0 => 95.0,
+        83.0..85.0 => 90.0,
+        10.0..83.0 => pct_charged,
+        _ => 0.0,
+    })
 }
 
 // GET /api/display - Fetch the next screen
@@ -141,7 +161,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Extract optional headers for device telemetry
     let battery_voltage = headers.get("Battery-Voltage").and_then(|h| h.to_str().ok());
-    let percent_charged = headers.get("Percent-Charged").and_then(|h| h.to_str().ok());
+    // let percent_charged = headers.get("Percent-Charged").and_then(|h| h.to_str().ok());
     let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok());
     let rssi = headers.get("RSSI").and_then(|h| h.to_str().ok());
     let device_height = headers.get("Height").and_then(|h| h.to_str().ok());
@@ -150,7 +170,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let base64 = headers.get("BASE64").and_then(|h| h.to_str().ok());
 
     info!("Device telemetry - Access-Token: {}, Battery: {:?}, Charge: {:?}, FW: {:?}, RSSI: {:?}, Size: {:?}x{:?}, Special: {:?}, Base64: {:?}",
-        access_token, battery_voltage, percent_charged, fw_version, rssi, device_width, device_height, special_function, base64);
+        access_token, battery_voltage, battery_voltage.map(|x| percent_charged(x)), fw_version, rssi, device_width, device_height, special_function, base64);
 
     // Get the host from the request headers to build the correct image URL
     let host = headers.get("host")
@@ -170,13 +190,13 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         // status: 200,
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 10,
+        refresh_rate: 5*60,
         // reset_firmware: false,
         update_firmware: false,
         // firmware_url: None,
         // special_function: "identify".to_string(),
         // action: Some("identify".to_string()),
-        maximum_compatibility: true,
+        maximum_compatibility: false,
     };
 
     // Log response
@@ -299,16 +319,14 @@ fn default_fw() -> String { "unknown".to_string() }
 
 // GET /render/screen.bmp - Render screen image
 async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
-    info!("=== GET /render/screen.bmp - {}x{} ===", params.width, params.height);
-
     let prometheus_url = std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
     let client = prometheus_http_query::Client::try_from(prometheus_url.as_str()).unwrap();
-    let query = r#"scrape_duration_seconds{instance="localhost:9090", job="prometheus"}"#;
+    let query = r#"sht30_reading{location="Front Porch", sensor="temperature"} * 9/5 + 32"#;
 
     let scrape_duration_display = match client.query(query).get().await {
         Ok(response) => {
             response.data().as_vector()
-                .and_then(|v| v.first().map(|sample| format!("{}s", sample.sample().value())))
+                .and_then(|v| v.first().map(|sample| format!("{:.1} f", sample.sample().value())))
                 .unwrap_or_else(|| "N/A".to_string())
         }
         Err(e) => {
@@ -316,8 +334,6 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
             "N/A".to_string()
         }
     };
-
-    info!("Prometheus scrape_duration_seconds: {}", scrape_duration_display);
 
     renderer::render_screen(params.width, params.height, scrape_duration_display, params.fw).await
 }
