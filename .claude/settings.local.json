@@ -14,7 +14,19 @@
       "WebFetch(domain:help.trmnl.com)",
       "WebFetch(domain:docs.usetrmnl.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:crates.io)",
+      "Bash(rustc:*)",
+      "Bash(cargo --version:*)",
+      "WebFetch(domain:leptos.dev)",
+      "WebFetch(domain:book.leptos.dev)",
+      "Bash(rustup target list:*)",
+      "Bash(gh api:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo leptos build:*)",
+      "Bash(cargo search:*)",
+      "Bash(cargo tree:*)",
+      "Bash(DATABASE_URL=test.db timeout 3 cargo leptos:*)"
     ]
   }
 }

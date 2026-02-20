@@ -1,6 +1,10 @@
 #!/bin/bash
 
-set -e 
+set -e
 
-cargo install cargo-watch
+rustup target add wasm32-unknown-unknown
 rustup component add rustfmt
+
+cargo install cargo-leptos --locked
+cargo install diesel_cli --no-default-features --features sqlite
+cargo install cargo-watch

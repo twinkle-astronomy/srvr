@@ -11,7 +11,12 @@ pub enum Error {
 }
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(width: u32, height: u32, scrape_duration: Option<f64>, fw_version: String) -> Result<Vec<u8>, Error> {
+pub async fn render_screen(
+    width: u32,
+    height: u32,
+    scrape_duration: Option<f64>,
+    fw_version: String,
+) -> Result<Vec<u8>, Error> {
     // Get current time
     let now = Utc::now();
 
@@ -29,9 +34,8 @@ pub async fn render_screen(width: u32, height: u32, scrape_duration: Option<f64>
     });
     // Render SVG from template
     let svg_data = render_svg_template(svg_template, globals)?;
-    
-    Ok(svg_to_bmp(&svg_data)?)
 
+    Ok(svg_to_bmp(&svg_data)?)
 }
 
 /// Renders a Liquid template to SVG string
@@ -54,7 +58,8 @@ fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
 
     // Create pixmap for rendering
     let pixmap_size = tree.size().to_int_size();
-    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height()).expect("Invalid image size");
+    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
+        .expect("Invalid image size");
 
     // Render SVG to pixmap
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
@@ -80,8 +85,8 @@ fn pixmap_to_bmp(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, Error> {
 
             // Convert to grayscale using standard luminance formula
             let gray = (0.299 * pixel.red() as f32
-                      + 0.587 * pixel.green() as f32
-                      + 0.114 * pixel.blue() as f32) as u8;
+                + 0.587 * pixel.green() as f32
+                + 0.114 * pixel.blue() as f32) as u8;
 
             // Apply threshold: >= 127 is white (1), < 127 is black (0)
             if gray >= 127 {

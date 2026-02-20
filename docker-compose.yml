@@ -11,8 +11,10 @@ services:
       - bash-history:/home/dev/.bash_history_dir
     ports:
       - "8080:8080"
+      - "3001:3001"
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
+      - DATABASE_URL=data.db
     command:
       "sleep infinity"
 
