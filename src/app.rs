@@ -12,6 +12,11 @@ use leptos::task::spawn_local;
 use leptos::{leptos_dom::logging::console_error, prelude::*};
 
 #[cfg(feature = "ssr")]
+fn spawn_local<F: Future>(_: F) { }
+#[cfg(feature = "ssr")]
+fn console_error(_: &str) { }
+
+#[cfg(feature = "ssr")]
 pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
     view! {
         <!DOCTYPE html>
@@ -51,8 +56,9 @@ pub fn App() -> impl IntoView {
 fn HomePage() -> impl IntoView {
     let (devices, set_devices) = signal::<Vec<Device>>(vec![]);
 
-    #[cfg(not(feature = "ssr"))]
     spawn_local(async move {
+        console_error("getting devices");
+
         match get_server_info().await {
             Ok(devices) => {
                 set_devices.set(devices);
@@ -66,14 +72,6 @@ fn HomePage() -> impl IntoView {
     view! {
         <h1>"TRMNL Server"</h1>
         <p>"E-ink display server with web dashboard."</p>
-        // <button on:click=move |_| { fetch_action.dispatch(()); }>
-        //     "Test Server Function"
-        // </button>
-        // <p>{move || match fetch_action.value().get() {
-        //     None => "Fetching devices".to_string(),
-        //     Some(Ok(msg)) => format!("{:?}", msg),
-        //     Some(Err(e)) => format!("Error: {e}"),
-        // }}</p>
         {move || devices.get().iter().map(|n| { n.mac_address.clone()}).into_iter().collect::<Vec<_>>()}
 
     }
