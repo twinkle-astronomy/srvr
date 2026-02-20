@@ -1,9 +1,15 @@
+use crate::models::Device;
 use leptos::prelude::*;
 use leptos_meta::*;
 use leptos_router::{
     components::{Route, Router, Routes},
     path,
 };
+
+#[cfg(not(feature = "ssr"))]
+use leptos::task::spawn_local;
+#[cfg(not(feature = "ssr"))]
+use leptos::{leptos_dom::logging::console_error, prelude::*};
 
 #[cfg(feature = "ssr")]
 pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
@@ -43,19 +49,33 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn HomePage() -> impl IntoView {
-    let fetch_action = Action::new(|_: &()| get_server_info());
+    let (devices, set_devices) = signal::<Vec<Device>>(vec![]);
+
+    #[cfg(not(feature = "ssr"))]
+    spawn_local(async move {
+        match get_server_info().await {
+            Ok(devices) => {
+                set_devices.set(devices);
+            }
+            Err(e) => {
+                console_error(format!("Unable to get devices: {:?}", e).as_str());
+            }
+        }
+    });
 
     view! {
         <h1>"TRMNL Server"</h1>
         <p>"E-ink display server with web dashboard."</p>
-        <button on:click=move |_| { fetch_action.dispatch(()); }>
-            "Test Server Function"
-        </button>
-        <p>{move || match fetch_action.value().get() {
-            None => "Click the button to test server functions.".to_string(),
-            Some(Ok(msg)) => format!("{:?}", msg),
-            Some(Err(e)) => format!("Error: {e}"),
-        }}</p>
+        // <button on:click=move |_| { fetch_action.dispatch(()); }>
+        //     "Test Server Function"
+        // </button>
+        // <p>{move || match fetch_action.value().get() {
+        //     None => "Fetching devices".to_string(),
+        //     Some(Ok(msg)) => format!("{:?}", msg),
+        //     Some(Err(e)) => format!("Error: {e}"),
+        // }}</p>
+        {move || devices.get().iter().map(|n| { n.mac_address.clone()}).into_iter().collect::<Vec<_>>()}
+
     }
 }
 
@@ -68,7 +88,7 @@ fn AboutPage() -> impl IntoView {
 }
 
 #[server(prefix = "/leptos-api")]
-pub async fn get_server_info() -> Result<Vec<String>, ServerFnError> {
+pub async fn get_server_info() -> Result<Vec<Device>, ServerFnError> {
     use crate::state::AppState;
 
     let db = leptos::context::use_context::<AppState>()
@@ -77,7 +97,7 @@ pub async fn get_server_info() -> Result<Vec<String>, ServerFnError> {
     Ok(db
         .get_all_devices()
         .await?
-        .iter()
-        .map(|x| format!("{:?}", x))
+        .into_iter()
+        .map(|x| x.into())
         .collect())
 }

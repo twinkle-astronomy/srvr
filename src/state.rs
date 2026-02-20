@@ -9,10 +9,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{error, instrument};
 
-use crate::{
-    device::{Device, NewDevice},
-    schema::devices::{self},
-};
+use crate::schema::devices::{self};
 use std::ops::DerefMut;
 
 #[derive(Error, Debug)]
@@ -24,6 +21,43 @@ pub enum Error {
 }
 
 pub type Db = Arc<Mutex<SyncConnectionWrapper<SqliteConnection>>>;
+
+use chrono::NaiveDateTime;
+use diesel::prelude::*;
+
+#[derive(Queryable, Selectable, Debug)]
+#[diesel(table_name = crate::schema::devices)]
+pub struct Device {
+    pub id: i32,
+    pub mac_address: String,
+    pub friendly_name: Option<String>,
+    pub api_key: String,
+    pub firmware_version: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub last_seen_at: Option<NaiveDateTime>,
+}
+
+impl From<Device> for crate::models::Device {
+    fn from(value: Device) -> Self {
+        Self {
+            id: value.id,
+            mac_address: value.mac_address,
+            friendly_name: value.friendly_name,
+            api_key: value.api_key,
+            firmware_version: value.firmware_version,
+            // created_at: value.created_at,
+            // last_seen_at: value.last_seen_at,
+        }
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::devices)]
+pub struct NewDevice<'a> {
+    pub mac_address: &'a str,
+    pub api_key: &'a str,
+    pub firmware_version: Option<&'a str>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
