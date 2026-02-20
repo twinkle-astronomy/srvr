@@ -1,0 +1,39 @@
+<svg width="{{ width }}" height="{{ height }}" xmlns="http://www.w3.org/2000/svg">
+    <!-- White background -->
+    <rect width="100%" height="100%" fill="white"/>
+
+    <!-- Black header bar -->
+    <rect x="0" y="0" width="{{ width }}" height="80" fill="black"/>
+
+    <!-- Header text (white on black) -->
+    <text x="400" y="50" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="36" font-weight="bold" text-anchor="middle" fill="white">
+        TRMNL Display
+    </text>
+
+    <!-- Current time -->
+    <text x="400" y="150" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="32" text-anchor="middle" fill="black">
+        {{ time }}
+    </text>
+
+    <!-- Metric label -->
+    <text x="400" y="220" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="black">
+        Front Porch
+    </text>
+
+    <!-- Metric value -->
+    <text x="400" y="290" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="64" font-weight="bold" text-anchor="middle" fill="black">
+        {% if scrape_duration %}
+            {{ scrape_duration | round: 1 }} f
+        {% else %}
+            N/A
+        {% endif %}
+    </text>
+
+    <!-- Black footer bar -->
+    <rect x="0" y="{{ height | minus: 80 }}" width="{{ width }}" height="80" fill="black"/>
+
+    <!-- Footer text (white on black) -->
+    <text x="400" y="{{ height | minus: 30  }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
+        {{ date }} | FW {{ fw_version }}
+    </text>
+</svg>
