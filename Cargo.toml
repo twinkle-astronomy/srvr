@@ -81,6 +81,7 @@ bin-features = ["ssr"]
 lib-features = ["hydrate"]
 bin-default-features = false
 lib-default-features = false
+tailwind-input-file = "style/input.css"
 lib-profile-release = "wasm-release"
 
 [profile.wasm-release]
