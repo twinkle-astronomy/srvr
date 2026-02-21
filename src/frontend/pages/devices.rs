@@ -62,10 +62,7 @@ pub fn Devices() -> Element {
                                         }
                                         td { class: "px-6 py-4 text-gray-700", "{device.model}" }
                                         td { class: "px-6 py-4 text-gray-700 font-mono text-xs",
-                                            match (device.width, device.height) {
-                                                (Some(w), Some(h)) => rsx! { "{w}x{h}" },
-                                                _ => rsx! { span { class: "text-gray-300", "—" } },
-                                            }
+                                            "{device.width} x {device.height}"
                                         }
                                         td { class: "px-6 py-4 text-gray-700 font-mono text-xs",
                                             match &device.fw_version {

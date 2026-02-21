@@ -1,19 +1,17 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::get_screen_preview;
-
 #[component]
 pub fn ScreenPreview() -> Element {
     let mut refresh_count = use_signal(|| 0u32);
     let mut width = use_signal(|| 800u32);
     let mut height = use_signal(|| 480u32);
 
-    let screen = use_server_future(move || {
-        let _ = refresh_count();
-        let w = width();
-        let h = height();
-        get_screen_preview(w, h)
-    })?;
+    // let screen = use_server_future(move || {
+    //     let _ = refresh_count();
+    //     let w = width();
+    //     let h = height();
+    //     get_screen_preview(1)
+    // })?;
 
     rsx! {
         div { class: "mb-8",
@@ -54,31 +52,31 @@ pub fn ScreenPreview() -> Element {
                 }
             }
 
-            div { class: "bg-gray-50 rounded-lg p-6 flex items-center justify-center min-h-64",
-                match screen() {
-                    Some(Ok(Some(b64))) => rsx! {
-                        img {
-                            src: "data:image/bmp;base64,{b64}",
-                            alt: "E-ink screen preview",
-                            class: "max-w-full h-auto border border-gray-200 rounded shadow-sm",
-                            style: "image-rendering: pixelated;",
-                            width: "{width}",
-                        }
-                    },
-                    Some(Ok(None)) => rsx! {
-                        div { class: "py-20 text-gray-400 text-sm", "Unable to render screen preview" }
-                    },
-                    Some(Err(e)) => rsx! {
-                        div { class: "py-20 text-red-400 text-sm", "Render error: {e}" }
-                    },
-                    None => rsx! {
-                        div { class: "flex flex-col items-center justify-center py-20 gap-3",
-                            div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
-                            p { class: "text-sm text-gray-400", "Rendering..." }
-                        }
-                    },
-                }
-            }
+            // div { class: "bg-gray-50 rounded-lg p-6 flex items-center justify-center min-h-64",
+            //     match screen() {
+            //         Some(Ok(Some(b64))) => rsx! {
+            //             img {
+            //                 src: "data:image/bmp;base64,{b64}",
+            //                 alt: "E-ink screen preview",
+            //                 class: "max-w-full h-auto border border-gray-200 rounded shadow-sm",
+            //                 style: "image-rendering: pixelated;",
+            //                 width: "{width}",
+            //             }
+            //         },
+            //         Some(Ok(None)) => rsx! {
+            //             div { class: "py-20 text-gray-400 text-sm", "Unable to render screen preview" }
+            //         },
+            //         Some(Err(e)) => rsx! {
+            //             div { class: "py-20 text-red-400 text-sm", "Render error: {e}" }
+            //         },
+            //         None => rsx! {
+            //             div { class: "flex flex-col items-center justify-center py-20 gap-3",
+            //                 div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
+            //                 p { class: "text-sm text-gray-400", "Rendering..." }
+            //             }
+            //         },
+            //     }
+            // }
         }
     }
 }

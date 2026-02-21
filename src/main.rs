@@ -4,6 +4,9 @@ mod db;
 #[cfg(feature = "server")]
 mod device;
 mod frontend;
+mod models;
+#[cfg(feature="server")]
+mod data_sources;
 
 fn main() {
     #[cfg(feature = "server")]

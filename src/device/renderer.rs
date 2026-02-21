@@ -1,6 +1,8 @@
 use chrono::Utc;
-use liquid::{Object, ParserBuilder};
+use dioxus::prelude::*;
 use thiserror::Error;
+
+use crate::{data_sources::get_prometheus, db::get_template, models::Device};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -8,39 +10,30 @@ pub enum Error {
     LiquidError(#[from] liquid::Error),
     #[error("{0}")]
     UsvgError(#[from] usvg::Error),
+    #[error("{0}")]
+    DbError(#[from] sqlx::error::Error)
 }
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(width: u32, height: u32, scrape_duration: Option<f64>, fw_version: String) -> Result<Vec<u8>, Error> {
-    // Get current time
+pub async fn render_screen(
+    device: &Device
+) -> Result<Vec<u8>, Error> {
+    let template = get_template().await?;
+
     let now = Utc::now();
-
-    // Create Liquid template for SVG
-    let svg_template = include_str!("image.svg.liquid");
-
-    // Create template context with variables
     let globals = liquid::object!({
-        "width": liquid::object!(width),
-        "height": liquid::object!(height),
+        "width": device.width,
+        "height": device.height,
         "time": now.format("%H:%M:%S UTC").to_string(),
         "date": now.format("%Y-%m-%d").to_string(),
-        "scrape_duration": liquid::object!(scrape_duration),
-        "fw_version": fw_version.to_string(),
+        "scrape_duration": get_prometheus().await,
+        "fw_version": device.fw_version,
     });
+
     // Render SVG from template
-    let svg_data = render_svg_template(svg_template, globals)?;
-    
+    let svg_data = template.render(globals)?;
+
     Ok(svg_to_bmp(&svg_data)?)
-
-}
-
-/// Renders a Liquid template to SVG string
-fn render_svg_template(template_str: &str, globals: Object) -> Result<String, Error> {
-    let parser = ParserBuilder::with_stdlib().build()?;
-
-    let template = parser.parse(template_str)?;
-
-    Ok(template.render(&globals)?)
 }
 
 /// Converts SVG string to 1-bit BMP data
@@ -54,7 +47,8 @@ fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
 
     // Create pixmap for rendering
     let pixmap_size = tree.size().to_int_size();
-    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height()).expect("Invalid image size");
+    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
+        .expect("Invalid image size");
 
     // Render SVG to pixmap
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
@@ -80,8 +74,8 @@ fn pixmap_to_bmp(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, Error> {
 
             // Convert to grayscale using standard luminance formula
             let gray = (0.299 * pixel.red() as f32
-                      + 0.587 * pixel.green() as f32
-                      + 0.114 * pixel.blue() as f32) as u8;
+                + 0.587 * pixel.green() as f32
+                + 0.114 * pixel.blue() as f32) as u8;
 
             // Apply threshold: >= 127 is white (1), < 127 is black (0)
             if gray >= 127 {
