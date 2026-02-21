@@ -1,5 +1,6 @@
+
 #[cfg(feature = "server")]
-mod renderer;
+mod db;
 #[cfg(feature = "server")]
 mod device;
 mod frontend;
@@ -30,6 +31,14 @@ fn main() {
                 cors::{Any, CorsLayer},
                 trace::TraceLayer,
             };
+
+            // Initialize database and run migrations
+            let db = crate::db::init().await;
+            sqlx::migrate!()
+                .run(db)
+                .await
+                .expect("Failed to run database migrations");
+            tracing::info!("Database initialized and migrations applied");
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
             let device_api = crate::device::api::router();

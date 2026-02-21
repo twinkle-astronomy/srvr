@@ -1,14 +1,18 @@
 use std::{f32, num::ParseFloatError};
 
 use axum::{
-    Router, extract::{Json, Query}, http::{HeaderMap, StatusCode}, response::IntoResponse, routing::{get, post}
+    Router,
+    extract::{Json, Query},
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
-use crate::renderer;
+use crate::device::renderer;
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
     Router::new()
@@ -18,8 +22,6 @@ pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
 }
-
-
 
 #[derive(Serialize)]
 struct DisplayResponse {
@@ -68,7 +70,7 @@ struct SetupResponse {
     message: String,
 }
 
-fn percent_charged(battery_voltage: &str) -> Result<f32,  ParseFloatError> {
+fn percent_charged(battery_voltage: &str) -> Result<f32, ParseFloatError> {
     let battery_voltage: f32 = battery_voltage.parse()?;
     let pct_charged = (battery_voltage - 3.) / 0.012;
 
@@ -79,6 +81,15 @@ fn percent_charged(battery_voltage: &str) -> Result<f32,  ParseFloatError> {
         10.0..83.0 => pct_charged,
         _ => 0.0,
     })
+}
+
+fn generate_access_token() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf).map(|_| ()))
+        .expect("Failed to read /dev/urandom");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 // GET /api/display - Fetch the next screen
@@ -98,27 +109,75 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         Some(token) => token.to_str().unwrap_or(""),
         None => {
             info!("Response: 401 Unauthorized - Missing Access-Token");
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
-                "error": "Missing Access-Token header"
-            }))).into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": "Missing Access-Token header"
+                })),
+            )
+                .into_response();
         }
     };
 
     // Extract optional headers for device telemetry
     let battery_voltage = headers.get("Battery-Voltage").and_then(|h| h.to_str().ok());
-    // let percent_charged = headers.get("Percent-Charged").and_then(|h| h.to_str().ok());
     let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok());
     let rssi = headers.get("RSSI").and_then(|h| h.to_str().ok());
     let device_height = headers.get("Height").and_then(|h| h.to_str().ok());
     let device_width = headers.get("Width").and_then(|h| h.to_str().ok());
-    let special_function = headers.get("Special-Function").and_then(|h| h.to_str().ok());
+    let special_function = headers
+        .get("Special-Function")
+        .and_then(|h| h.to_str().ok());
     let base64 = headers.get("BASE64").and_then(|h| h.to_str().ok());
 
-    info!("Device telemetry - Access-Token: {}, Battery: {:?}, Charge: {:?}, FW: {:?}, RSSI: {:?}, Size: {:?}x{:?}, Special: {:?}, Base64: {:?}",
-        access_token, battery_voltage, battery_voltage.map(|x| percent_charged(x)), fw_version, rssi, device_width, device_height, special_function, base64);
+    info!(
+        "Device telemetry - Access-Token: {}, Battery: {:?}, Charge: {:?}, FW: {:?}, RSSI: {:?}, Size: {:?}x{:?}, Special: {:?}, Base64: {:?}",
+        access_token,
+        battery_voltage,
+        battery_voltage.map(|x| percent_charged(x)),
+        fw_version,
+        rssi,
+        device_width,
+        device_height,
+        special_function,
+        base64
+    );
+
+    // Upsert device telemetry in database
+    let db = crate::db::get();
+    let token = access_token.to_string();
+    let bv = battery_voltage.map(|s| s.to_string());
+    let fw = fw_version.map(|s| s.to_string());
+    let rssi_val = rssi.map(|s| s.to_string());
+    let w: Option<i64> = device_width.and_then(|s| s.parse().ok());
+    let h: Option<i64> = device_height.and_then(|s| s.parse().ok());
+    let db_clone = db.clone();
+
+    let _ = sqlx::query(
+        "INSERT INTO devices (access_token, mac_address, model, friendly_id, \
+            battery_voltage, fw_version, rssi, width, height) \
+         VALUES (?, 'unknown', 'unknown', 'unknown', ?, ?, ?, ?, ?) \
+         ON CONFLICT(access_token) DO UPDATE SET \
+            battery_voltage = COALESCE(excluded.battery_voltage, battery_voltage), \
+            fw_version = COALESCE(excluded.fw_version, fw_version), \
+            rssi = COALESCE(excluded.rssi, rssi), \
+            width = COALESCE(excluded.width, width), \
+            height = COALESCE(excluded.height, height), \
+            last_seen_at = datetime('now'), \
+            updated_at = datetime('now')",
+    )
+    .bind(&token)
+    .bind(bv)
+    .bind(fw)
+    .bind(rssi_val)
+    .bind(w)
+    .bind(h)
+    .execute(&db_clone)
+    .await;
 
     // Get the host from the request headers to build the correct image URL
-    let host = headers.get("host")
+    let host = headers
+        .get("host")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost:8080");
 
@@ -127,25 +186,25 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let width_param = device_width.unwrap_or("800");
     let height_param = device_height.unwrap_or("480");
     let fw_param = fw_version.unwrap_or("unknown");
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
-        host, width_param, height_param, fw_param, timestamp);
+    let image_url = format!(
+        "http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, width_param, height_param, fw_param, timestamp
+    );
 
-    // TODO: Implement actual device lookup and image generation
     let response = DisplayResponse {
-        // status: 200,
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 5*60,
-        // reset_firmware: false,
+        refresh_rate: 5 * 60,
         update_firmware: false,
-        // firmware_url: None,
-        // special_function: "identify".to_string(),
-        // action: Some("identify".to_string()),
         maximum_compatibility: false,
     };
 
     // Log response
-    info!("Response: {}", serde_json::to_string_pretty(&response).unwrap_or_else(|_| "Failed to serialize response".to_string()));
+    info!(
+        "Response: {}",
+        serde_json::to_string_pretty(&response)
+            .unwrap_or_else(|_| "Failed to serialize response".to_string())
+    );
 
     (StatusCode::OK, Json(response)).into_response()
 }
@@ -153,29 +212,62 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
 // GET /api/display/current - Fetch the current screen
 async fn display_current_handler(headers: HeaderMap) -> impl IntoResponse {
     // Extract required Access-Token header
-    let _access_token = match headers.get("Access-Token") {
+    let access_token = match headers.get("Access-Token") {
         Some(token) => token.to_str().unwrap_or(""),
-        None => return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
-            "error": "Missing Access-Token header"
-        }))).into_response(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": "Missing Access-Token header"
+                })),
+            )
+                .into_response();
+        }
     };
 
+    // Upsert last_seen in database (fire-and-forget)
+    let db = crate::db::get().clone();
+    let token = access_token.to_string();
+    tokio::spawn(async move {
+        let _ = sqlx::query(
+            "INSERT INTO devices (access_token, mac_address, model, friendly_id) \
+             VALUES (?, 'unknown', 'unknown', 'unknown') \
+             ON CONFLICT(access_token) DO UPDATE SET \
+                last_seen_at = datetime('now'), \
+                updated_at = datetime('now')"
+        )
+            .bind(&token)
+            .execute(&db)
+            .await;
+    });
+
     // Get device dimensions and firmware version if available
-    let device_width = headers.get("Width").and_then(|h| h.to_str().ok()).unwrap_or("800");
-    let device_height = headers.get("Height").and_then(|h| h.to_str().ok()).unwrap_or("480");
-    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok()).unwrap_or("unknown");
+    let device_width = headers
+        .get("Width")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("800");
+    let device_height = headers
+        .get("Height")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("480");
+    let fw_version = headers
+        .get("FW-Version")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown");
 
     // Get the host from the request headers to build the correct image URL
-    let host = headers.get("host")
+    let host = headers
+        .get("host")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost:8080");
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
-        host, device_width, device_height, fw_version, timestamp);
+    let image_url = format!(
+        "http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, device_width, device_height, fw_version, timestamp
+    );
 
-    // TODO: Implement actual current screen lookup
     let response = DisplayCurrentResponse {
         status: 200,
         refresh_rate: 300,
@@ -190,13 +282,28 @@ async fn display_current_handler(headers: HeaderMap) -> impl IntoResponse {
 // POST /api/log - Log with logs[] array
 async fn log_handler(headers: HeaderMap, Json(payload): Json<LogRequest>) -> impl IntoResponse {
     // Extract required Access-Token header
-    let _access_token = match headers.get("Access-Token") {
+    let access_token = match headers.get("Access-Token") {
         Some(token) => token.to_str().unwrap_or(""),
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    // TODO: Implement actual logging
     info!("Received logs: {:?}", payload.logs);
+
+    // Upsert last_seen in database (fire-and-forget)
+    let db = crate::db::get().clone();
+    let token = access_token.to_string();
+    tokio::spawn(async move {
+        let _ = sqlx::query(
+            "INSERT INTO devices (access_token, mac_address, model, friendly_id) \
+             VALUES (?, 'unknown', 'unknown', 'unknown') \
+             ON CONFLICT(access_token) DO UPDATE SET \
+                last_seen_at = datetime('now'), \
+                updated_at = datetime('now')"
+        )
+            .bind(&token)
+            .execute(&db)
+            .await;
+    });
 
     StatusCode::NO_CONTENT.into_response()
 }
@@ -206,41 +313,141 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     // Extract required headers
     let device_id = match headers.get("ID") {
         Some(id) => id.to_str().unwrap_or(""),
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "Missing ID header (Device MAC Address)"
-        }))).into_response(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Missing ID header (Device MAC Address)"
+                })),
+            )
+                .into_response();
+        }
     };
 
     let device_model = match headers.get("Model") {
         Some(model) => model.to_str().unwrap_or(""),
-        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "Missing Model header"
-        }))).into_response(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Missing Model header"
+                })),
+            )
+                .into_response();
+        }
     };
 
-    // TODO: Implement actual device setup and registration
     info!("Setup request - ID: {}, Model: {}", device_id, device_model);
 
     // Get device dimensions and firmware version if available
-    let device_width = headers.get("Width").and_then(|h| h.to_str().ok()).unwrap_or("800");
-    let device_height = headers.get("Height").and_then(|h| h.to_str().ok()).unwrap_or("480");
-    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok()).unwrap_or("unknown");
+    let device_width: Option<i64> = headers
+        .get("Width")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse().ok());
+    let device_height: Option<i64> = headers
+        .get("Height")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse().ok());
+    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok());
+
+    let db = crate::db::get();
+
+    // Check if device already exists by MAC address
+    let existing = sqlx::query_as::<_, (String, String)>(
+        "SELECT access_token, friendly_id FROM devices WHERE mac_address = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await;
+
+    let (api_key, friendly_id) = match existing {
+        Ok(Some((token, fid))) => {
+            // Device exists — update its info and return existing token
+            let _ = sqlx::query(
+                "UPDATE devices SET model = ?, width = COALESCE(?, width), height = COALESCE(?, height), \
+                 fw_version = COALESCE(?, fw_version), \
+                 last_seen_at = datetime('now'), updated_at = datetime('now') \
+                 WHERE mac_address = ?"
+            )
+                .bind(device_model)
+                .bind(device_width)
+                .bind(device_height)
+                .bind(fw_version)
+                .bind(device_id)
+                .execute(db)
+                .await;
+
+            info!("Existing device re-registered: {}", device_id);
+            (token, fid)
+        }
+        Ok(None) => {
+            // New device — generate token and insert
+            let token = generate_access_token();
+            let fid = format!("device-{}", &device_id[..device_id.len().min(6)]);
+
+            let result = sqlx::query(
+                "INSERT INTO devices (mac_address, model, access_token, friendly_id, \
+                 width, height, fw_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(device_id)
+            .bind(device_model)
+            .bind(&token)
+            .bind(&fid)
+            .bind(device_width)
+            .bind(device_height)
+            .bind(fw_version)
+            .execute(db)
+            .await;
+
+            if let Err(e) = result {
+                tracing::error!("Failed to insert device: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "Failed to register device"
+                    })),
+                )
+                    .into_response();
+            }
+
+            info!("New device registered: {} -> {}", device_id, fid);
+            (token, fid)
+        }
+        Err(e) => {
+            tracing::error!("Database error during setup: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Database error"
+                })),
+            )
+                .into_response();
+        }
+    };
 
     // Get the host from the request headers to build the correct image URL
-    let host = headers.get("host")
+    let host = headers
+        .get("host")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost:8080");
 
-    // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let image_url = format!("http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
-        host, device_width, device_height, fw_version, timestamp);
+    let width_param = device_width
+        .map(|w| w.to_string())
+        .unwrap_or_else(|| "800".to_string());
+    let height_param = device_height
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| "480".to_string());
+    let fw_param = fw_version.unwrap_or("unknown");
+    let image_url = format!(
+        "http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
+        host, width_param, height_param, fw_param, timestamp
+    );
 
-    // Mock response - in production, this would check if device exists
     let response = SetupResponse {
         status: 200,
-        api_key: Some("mock-api-key-12345".to_string()),
-        friendly_id: Some(format!("device-{}", &device_id[..6])),
+        api_key: Some(api_key),
+        friendly_id: Some(friendly_id),
         image_url: Some(image_url),
         message: "Device setup successful".to_string(),
     };
@@ -258,40 +465,43 @@ struct RenderQuery {
     fw: String,
 }
 
-fn default_width() -> u32 { 800 }
-fn default_height() -> u32 { 480 }
-fn default_fw() -> String { "unknown".to_string() }
+fn default_width() -> u32 {
+    800
+}
+fn default_height() -> u32 {
+    480
+}
+fn default_fw() -> String {
+    "unknown".to_string()
+}
 
 // GET /render/screen.bmp - Render screen image
 async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
-    let prometheus_url = std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
+    let prometheus_url =
+        std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
     let client = prometheus_http_query::Client::try_from(prometheus_url.as_str()).unwrap();
     let query = r#"sht30_reading{location="Front Porch", sensor="temperature"} * 9/5 + 32"#;
 
     let scrape_duration_display = match client.query(query).get().await {
-        Ok(response) => {
-            response.data().as_vector()
-                .and_then(|v| v.first().map(|sample| sample.sample().value()))
-        }
+        Ok(response) => response
+            .data()
+            .as_vector()
+            .and_then(|v| v.first().map(|sample| sample.sample().value())),
         Err(e) => {
             info!("Failed to query Prometheus: {}", e);
             None
         }
     };
 
-    match renderer::render_screen(params.width, params.height, scrape_duration_display, params.fw).await {
-        Ok(image) => {
-             (
-                StatusCode::OK,
-                [("Content-Type", "image/bmp")],
-                image,
-            ).into_response()
-        },
-        Err(e) => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("{}", e)
-            ).into_response()
-        }
+    match renderer::render_screen(
+        params.width,
+        params.height,
+        scrape_duration_display,
+        params.fw,
+    )
+    .await
+    {
+        Ok(image) => (StatusCode::OK, [("Content-Type", "image/bmp")], image).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", e)).into_response(),
     }
 }

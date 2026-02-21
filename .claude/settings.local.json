@@ -15,7 +15,11 @@
       "WebFetch(domain:docs.usetrmnl.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.github.com)",
-      "Bash(dx build:*)"
+      "Bash(dx build:*)",
+      "Bash(cargo doc:*)",
+      "Read(//usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dioxus-0.7.3/src/**)",
+      "Read(//usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/src/**)",
+      "Read(//usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sqlx-0.8.6/**)"
     ]
   }
 }

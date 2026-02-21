@@ -41,7 +41,7 @@ pub async fn get_screen_preview(width: u32, height: u32) -> Result<Option<String
         Err(_) => None,
     };
 
-    match crate::renderer::render_screen(width, height, temperature, "web".to_string()).await {
+    match crate::device::renderer::render_screen(width, height, temperature, "web".to_string()).await {
         Ok(bmp_bytes) => {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
             Ok(Some(encoded))
@@ -51,6 +51,40 @@ pub async fn get_screen_preview(width: u32, height: u32) -> Result<Option<String
             Ok(None)
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DeviceInfo {
+    pub id: i64,
+    pub mac_address: String,
+    pub model: String,
+    pub friendly_id: String,
+    pub fw_version: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub battery_voltage: Option<String>,
+    pub rssi: Option<String>,
+    pub last_seen_at: String,
+    pub created_at: String,
+}
+
+#[server]
+pub async fn get_devices() -> Result<Vec<DeviceInfo>, ServerFnError> {
+    let db = crate::db::get();
+
+    type Row = (i64, String, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String, String);
+
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
+         FROM devices ORDER BY last_seen_at DESC"
+    )
+        .fetch_all(db)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    Ok(rows.into_iter().map(|(id, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at)| {
+        DeviceInfo { id, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at }
+    }).collect())
 }
 
 #[server]
