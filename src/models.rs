@@ -1,5 +1,3 @@
-use std::num::ParseFloatError;
-
 #[cfg(feature = "server")]
 use sqlx::FromRow;
 
@@ -54,8 +52,7 @@ pub struct Device {
 }
 
 impl Device {
-
-    fn percent_charged(&self) -> Option<f32> {
+    pub fn percent_charged(&self) -> Option<f32> {
         self.battery_voltage.map(|battery_voltage| {
             let pct_charged = (battery_voltage - 3.) / 0.012;
 

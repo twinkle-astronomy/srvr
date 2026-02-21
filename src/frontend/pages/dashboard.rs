@@ -4,22 +4,13 @@ use crate::frontend::server_fns::{get_server_info, get_temperature};
 
 #[component]
 pub fn Dashboard() -> Element {
-    let mut refresh_count = use_signal(|| 0u32);
-
     let temperature = use_server_future(move || {
-        let _ = refresh_count();
         get_temperature()
     })?;
 
     let server_info = use_server_future(move || {
-        let _ = refresh_count();
         get_server_info()
     })?;
-
-    // let screen = use_server_future(move || {
-    //     let _ = refresh_count();
-    //     get_screen_preview(800, 480)
-    // })?;
 
     rsx! {
         div { class: "mb-8",

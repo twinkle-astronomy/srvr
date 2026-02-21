@@ -14,7 +14,6 @@ pub fn Nav() -> Element {
                 }
                 div { class: "flex items-center gap-1",
                     NavLink { to: Route::Dashboard {}, label: "Dashboard" }
-                    NavLink { to: Route::ScreenPreview {}, label: "Preview" }
                     NavLink { to: Route::ApiInfo {}, label: "API" }
                     NavLink { to: Route::Devices {}, label: "Devices" }
                 }

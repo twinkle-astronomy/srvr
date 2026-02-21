@@ -1,4 +1,4 @@
-use axum::http::{HeaderMap, header::ToStrError};use tracing::info;
+use axum::http::{HeaderMap, header::ToStrError};
 
 use crate::{db::get_or_create_device, models::Device};
 
