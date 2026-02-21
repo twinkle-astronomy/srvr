@@ -16,6 +16,9 @@ RUN groupadd -g ${GID} dev && \
 USER dev
 ENV USER=dev
 
+# Add WASM target for Dioxus frontend
+RUN rustup target add wasm32-unknown-unknown
+
 # Persist bash history to a mountable directory
 RUN mkdir -p /home/dev/.bash_history_dir && \
     echo 'export HISTFILE=/home/dev/.bash_history_dir/.bash_history' >> /home/dev/.bashrc

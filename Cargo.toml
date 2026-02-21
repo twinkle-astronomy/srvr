@@ -4,20 +4,43 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
-image = "0.25"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+dioxus = { version = "0.7", features = ["fullstack", "router"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-resvg = "0.44"
-usvg = "0.44"
-tiny-skia = "0.11"
-liquid = "0.26"
-prometheus-http-query = "0.8"
-axum-prometheus = "0.10.0"
-thiserror = "2.0.18"
+base64 = "0.22"
+
+# Server-only dependencies (not WASM-compatible)
+axum = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+resvg = { version = "0.44", optional = true }
+usvg = { version = "0.44", optional = true }
+tiny-skia = { version = "0.11", optional = true }
+liquid = { version = "0.26", optional = true }
+prometheus-http-query = { version = "0.8", optional = true }
+axum-prometheus = { version = "0.10.0", optional = true }
+thiserror = { version = "2.0.18", optional = true }
+image = { version = "0.25", optional = true }
+
+[features]
+web = ["dioxus/web"]
+server = [
+    "dioxus/server",
+    "dep:axum",
+    "dep:tokio",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:tracing-subscriber",
+    "dep:resvg",
+    "dep:usvg",
+    "dep:tiny-skia",
+    "dep:liquid",
+    "dep:prometheus-http-query",
+    "dep:axum-prometheus",
+    "dep:thiserror",
+    "dep:image",
+]

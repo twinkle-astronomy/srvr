@@ -14,7 +14,8 @@
       "WebFetch(domain:help.trmnl.com)",
       "WebFetch(domain:docs.usetrmnl.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(dx build:*)"
     ]
   }
 }

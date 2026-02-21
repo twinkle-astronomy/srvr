@@ -1,58 +1,55 @@
-use axum::{
-    Router, routing::get
-};
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use axum_prometheus::PrometheusMetricLayer;
-
+#[cfg(feature = "server")]
 mod renderer;
+#[cfg(feature = "server")]
 mod device;
+mod frontend;
 
+fn main() {
+    #[cfg(feature = "server")]
+    {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[tokio::main]
-async fn main() {
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-    // Initialize tracing subscriber to output to stdout
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .with_file(true)
-                .with_line_number(true)
-                .with_writer(std::io::stdout)
-        )
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,tower_http=debug".into())
-        )
-        .init();
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_writer(std::io::stdout),
+            )
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info,tower_http=debug".into()),
+            )
+            .init();
 
-    let device_api = crate::device::api::router();
+        dioxus::serve(|| async move {
+            use axum::routing::get;
+            use axum_prometheus::PrometheusMetricLayer;
+            use tower_http::{
+                cors::{Any, CorsLayer},
+                trace::TraceLayer,
+            };
 
-    let app = Router::new()
-        .route("/", get(root))
-        .route("/metrics", get(|| async move { metric_handle.render() }))
-        .layer(TraceLayer::new_for_http())
-        .layer(prometheus_layer)
-        .merge(device_api)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        );
+            let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+            let device_api = crate::device::api::router();
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
-        .await
-        .unwrap();
+            let router = dioxus::server::router(frontend::App)
+                .route("/metrics", get(move || async move { metric_handle.render() }))
+                .merge(device_api)
+                .layer(TraceLayer::new_for_http())
+                .layer(prometheus_layer)
+                .layer(
+                    CorsLayer::new()
+                        .allow_origin(Any)
+                        .allow_methods(Any)
+                        .allow_headers(Any),
+                );
 
-    axum::serve(listener, app).await.unwrap();
-}
+            Ok(router)
+        });
+    }
 
-async fn root() -> &'static str {
-    "TRMNL eink device server"
+    #[cfg(not(feature = "server"))]
+    dioxus::launch(frontend::App);
 }

@@ -2,5 +2,5 @@
 
 set -e 
 
-cargo install cargo-watch
+cargo install dioxus-cli
 rustup component add rustfmt
