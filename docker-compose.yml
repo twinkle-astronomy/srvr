@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dev
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
@@ -15,6 +16,23 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
     command:
       "sleep infinity"
+  srvr-published:
+    profiles: ["published"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: publish
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - srvr-data:/data
+    init: true
+    ports:
+      - "80:8080"
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - DATABASE_URL=sqlite:///data/data.db
 
   prometheus:
     image: prom/prometheus:latest
@@ -27,3 +45,4 @@ services:
 volumes:
   bash-history:
   prometheus-data:
+  srvr-data:

@@ -14,8 +14,6 @@ pub async fn init() -> &'static SqlitePool {
     let db_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./data/devices.db".to_string());
 
-    std::fs::create_dir_all("./data").expect("Failed to create data directory");
-
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(
