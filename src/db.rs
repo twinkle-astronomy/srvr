@@ -165,6 +165,54 @@ pub async fn get_or_create_device(
     Device::from_row(&device_id)
 }
 
+pub async fn update_prometheus_query(
+    id: i64,
+    name: &str,
+    addr: &str,
+    query: &str,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query(
+        "UPDATE prometheus_queries SET name = ?, addr = ?, query = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(name)
+    .bind(addr)
+    .bind(query)
+    .bind(id)
+    .execute(get())
+    .await?;
+
+    Ok(())
+}
+
+pub async fn delete_prometheus_query(id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM prometheus_queries WHERE id = ?")
+        .bind(id)
+        .execute(get())
+        .await?;
+
+    Ok(())
+}
+
+pub async fn create_prometheus_query(
+    template_id: i64,
+    name: &str,
+    addr: &str,
+    query: &str,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query(
+        "INSERT INTO prometheus_queries (template_id, name, addr, query, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+    )
+    .bind(template_id)
+    .bind(name)
+    .bind(addr)
+    .bind(query)
+    .execute(get())
+    .await?;
+
+    Ok(())
+}
+
 pub async fn get_prometheus_queries(
     template_id: i64,
 ) -> Result<Vec<PrometheusQuery>, sqlx::error::Error> {

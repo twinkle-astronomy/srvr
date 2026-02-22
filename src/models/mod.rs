@@ -1,6 +1,8 @@
 #[cfg(feature = "server")]
 use sqlx::FromRow;
 
+use std::collections::HashMap;
+
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub mod server;
 
 #[cfg_attr(feature = "server", derive(FromRow))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PrometheusQuery {
     pub id: i64,
     pub name: String,
@@ -43,6 +45,19 @@ pub struct Device {
     pub rssi: Option<String>,
     pub last_seen_at: String,
     pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PrometheusQueryResult {
+    pub query_name: String,
+    pub results: Vec<PrometheusMetricResult>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PrometheusMetricResult {
+    pub labels: HashMap<String, String>,
+    pub value: f64,
 }
 
 impl Device {
