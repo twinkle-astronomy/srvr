@@ -6,34 +6,25 @@
     <rect x="0" y="0" width="{{ device.width }}" height="80" fill="black"/>
 
     <!-- Header text (white on black) -->
-    <text x="400" y="50" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="36" font-weight="bold" text-anchor="middle" fill="white">
+    <text x="{{ device.width | divided_by: 2 }}" y="50" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="36" font-weight="bold" text-anchor="middle" fill="white">
         TRMNL Display
     </text>
 
-    <!-- Current time -->
-    <text x="400" y="150" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="32" text-anchor="middle" fill="black">
+    <!-- Current time (prominent) -->
+    <text x="{{ device.width | divided_by: 2 }}" y="{{ device.height | divided_by: 2 }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="120" font-weight="bold" text-anchor="middle" fill="black">
         {{ time }}
     </text>
 
-    <!-- Metric label -->
-    <text x="400" y="220" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="black">
-        Front Porch
-    </text>
-
-    <!-- Metric value -->
-    <text x="400" y="290" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="64" font-weight="bold" text-anchor="middle" fill="black">
-        {% if scrape_duration %}
-            {{ scrape_duration | round: 1 }} f
-        {% else %}
-            N/A
-        {% endif %}
+    <!-- Date below time -->
+    <text x="{{ device.width | divided_by: 2 }}" y="{{ device.height | divided_by: 2 | plus: 60 }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="32" text-anchor="middle" fill="black">
+        {{ date }}
     </text>
 
     <!-- Black footer bar -->
     <rect x="0" y="{{ device.height | minus: 80 }}" width="{{ device.width }}" height="80" fill="black"/>
 
     <!-- Footer text (white on black) -->
-    <text x="400" y="{{ device.height | minus: 30  }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
+    <text x="{{ device.width | divided_by: 2 }}" y="{{ device.height | minus: 30 }}" font-family="Liberation Sans, DejaVu Sans, Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
         {{ date }} | FW {{ device.fw_version }}
     </text>
 </svg>

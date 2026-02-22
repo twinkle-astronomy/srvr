@@ -54,17 +54,14 @@ pub async fn get_template_preview(
             ServerFnError::new(format!("Unable to find device with id: {:?}", device_id))
         })?;
 
-    match crate::device::renderer::render_screen(&device, &template).await {
-        Ok(bmp_bytes) => {
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
-            Ok(Some(encoded))
-        }
-        Err(e) => {
-            tracing::info!("Failed to render screen: {}", e);
-            Ok(None)
-        }
-    }
+    let bmp_bytes = crate::device::renderer::render_screen(&device, &template).await
+        .map_err(|e|
+            ServerFnError::new(format!("Unable to render screen: {}", e)))?;
+        
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
+    Ok(Some(encoded))
 }
+
 #[server]
 pub async fn get_template() -> Result<Template, ServerFnError> {
     let template = crate::db::get_template()

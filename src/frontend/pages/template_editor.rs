@@ -17,6 +17,7 @@ pub fn TemplateEditor() -> Element {
     let mut preview_loading = use_signal(|| false);
     let mut save_status = use_signal(|| None::<Result<(), String>>);
     let mut selected_device = use_signal(|| None::<Device>);
+    let mut preview_error = use_signal(|| None::<String>);
 
     // Uses peek() so it only re-runs when selected_device changes, not on every keystroke
     let mut fetch_preview = move || {
@@ -31,10 +32,13 @@ pub fn TemplateEditor() -> Element {
                 preview_loading.set(true);
                 spawn(async move {
                     match get_template_preview(device.id, template).await {
-                        Ok(b64) => preview_b64.set(b64),
+                        Ok(b64) => {
+                            preview_error.set(None);
+                            preview_b64.set(b64)},
                         Err(e) => {
                             tracing::error!("Preview error: {e}");
-                            preview_b64.set(None);
+                            preview_error.set(Some(format!("{:?}", e)));
+                            // preview_b64.set(None);
                         }
                     }
                     preview_loading.set(false);
@@ -46,7 +50,7 @@ pub fn TemplateEditor() -> Element {
     // Auto-preview on initial load and when device selection changes.
     // Must be registered before the ? operators so it runs on every render.
     use_effect(move || {
-        if selected_device().is_some() && !preview_loading() && preview_b64().is_none() {
+        if preview_error().is_none() && selected_device().is_some() && !preview_loading() && preview_b64().is_none() {
             info!("Loading preview");
             fetch_preview();
         }
@@ -81,6 +85,7 @@ pub fn TemplateEditor() -> Element {
                 devices,
                 selected_device,
                 save_status,
+                preview_error,
                 on_preview: move |_| fetch_preview(),
                 on_save: move |_| {
                     if let Some(tmpl) = template() {
@@ -114,6 +119,7 @@ fn TemplateForm(
     devices: Resource<Result<Vec<Device>, ServerFnError>>,
     mut selected_device: Signal<Option<Device>>,
     save_status: Signal<Option<Result<(), String>>>,
+    preview_error: Signal<Option<String>>,
     on_preview: EventHandler,
     on_save: EventHandler,
 ) -> Element {
@@ -151,6 +157,7 @@ fn TemplateForm(
                     spellcheck: false,
                     value: "{tmpl.content}",
                     oninput: move |evt| {
+                        save_status.set(None);
                         let mut writable = template.write();
                         if let Some(t) = writable.deref_mut() {
                             t.content = evt.value();
@@ -178,6 +185,12 @@ fn TemplateForm(
                     },
                     Some(Err(e)) => rsx! {
                         span { class: "text-sm text-red-500", "Error: {e}" }
+                    },
+                    None => rsx! {},
+                }
+                match preview_error() {
+                    Some(e) => rsx! {
+                        span { class: "text-sm text-red-600", "Error: {e}" }
                     },
                     None => rsx! {},
                 }
