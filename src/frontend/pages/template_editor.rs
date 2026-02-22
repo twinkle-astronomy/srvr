@@ -65,19 +65,6 @@ pub fn TemplateEditor() -> Element {
         }
     }
 
-    let on_save = move |_| {
-        if let Some(tmpl) = template() {
-            save_status.set(None);
-            fetch_preview();
-            spawn(async move {
-                match save_template(tmpl.id, tmpl.content).await {
-                    Ok(()) => save_status.set(Some(Ok(()))),
-                    Err(e) => save_status.set(Some(Err(e.to_string()))),
-                }
-            });
-        }
-    };
-
     rsx! {
         div { class: "mb-8",
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Template Editor" }
@@ -85,101 +72,146 @@ pub fn TemplateEditor() -> Element {
         }
 
         div { class: "flex flex-wrap items-start gap-6",
-            div { class: "flex-1 min-w-0 flex flex-col gap-4",
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "p-4 border-b border-gray-100 flex items-center justify-between",
-                        span { class: "text-sm font-medium text-gray-700", "Template" }
-                        match devices() {
-                            Some(Ok(ref devs)) if !devs.is_empty() => rsx! {
-                                select {
-                                    class: "text-sm border border-gray-200 rounded-lg px-2 py-1 text-gray-600",
-                                    onchange: move |evt| {
-                                        if let Some(Ok(ref devs)) = devices() {
-                                            if let Ok(idx) = evt.value().parse::<usize>() {
-                                                if let Some(d) = devs.get(idx) {
-                                                    selected_device.set(Some(d.clone()));
-                                                }
+            TemplateForm {
+                template,
+                devices,
+                selected_device,
+                save_status,
+                on_preview: move |_| fetch_preview(),
+                on_save: move |_| {
+                    if let Some(tmpl) = template() {
+                        save_status.set(None);
+                        fetch_preview();
+                        spawn(async move {
+                            match save_template(tmpl.id, tmpl.content).await {
+                                Ok(()) => save_status.set(Some(Ok(()))),
+                                Err(e) => save_status.set(Some(Err(e.to_string()))),
+                            }
+                        });
+                    }
+                },
+            }
+            TemplatePreview {
+                selected_device,
+                preview_loading,
+                preview_b64,
+            }
+        }
+    }
+}
+
+#[component]
+fn TemplateForm(
+    mut template: Signal<Option<Template>>,
+    devices: Resource<Result<Vec<Device>, ServerFnError>>,
+    mut selected_device: Signal<Option<Device>>,
+    save_status: Signal<Option<Result<(), String>>>,
+    on_preview: EventHandler,
+    on_save: EventHandler,
+) -> Element {
+    rsx! {
+        div { class: "flex-1 min-w-0 flex flex-col gap-4",
+            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                div { class: "p-4 border-b border-gray-100 flex items-center justify-between",
+                    span { class: "text-sm font-medium text-gray-700", "Template" }
+                    match devices() {
+                        Some(Ok(ref devs)) if !devs.is_empty() => rsx! {
+                            select {
+                                class: "text-sm border border-gray-200 rounded-lg px-2 py-1 text-gray-600",
+                                onchange: move |evt| {
+                                    if let Some(Ok(ref devs)) = devices() {
+                                        if let Ok(idx) = evt.value().parse::<usize>() {
+                                            if let Some(d) = devs.get(idx) {
+                                                selected_device.set(Some(d.clone()));
                                             }
                                         }
-                                    },
-                                    for (i, dev) in devs.iter().enumerate() {
-                                        option { value: "{i}", "{dev.friendly_id} ({dev.width}\u{00d7}{dev.height})" }
                                     }
+                                },
+                                for (i, dev) in devs.iter().enumerate() {
+                                    option { value: "{i}", "{dev.friendly_id} ({dev.width}\u{00d7}{dev.height})" }
                                 }
-                            },
-                            _ => rsx! {
-                                span { class: "text-xs text-gray-400", "No devices" }
-                            },
-                        }
-                    }
-                    if let Some(tmpl) = template() {
-                    textarea {
-                        class: "w-full h-96 p-4 font-mono text-sm text-gray-800 bg-gray-50 border-0 focus:outline-none focus:ring-0 resize-y",
-                        spellcheck: false,
-                        value: "{tmpl.content}",
-                        oninput: move |evt| {
-                            let mut writable = template.write();
-                            if let Some(t) = writable.deref_mut() {
-                                t.content = evt.value();
                             }
                         },
-                    }
-
+                        _ => rsx! {
+                            span { class: "text-xs text-gray-400", "No devices" }
+                        },
                     }
                 }
-
-                div { class: "flex items-center gap-3",
-                    button {
-                        class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                        disabled: selected_device().is_none(),
-                        onclick: move |_| fetch_preview(),
-                        "Preview"
-                    }
-                    button {
-                        class: "inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors",
-                        onclick: on_save,
-                        "Save"
-                    }
-                    match save_status() {
-                        Some(Ok(())) => rsx! {
-                            span { class: "text-sm text-green-600", "Saved!" }
-                        },
-                        Some(Err(e)) => rsx! {
-                            span { class: "text-sm text-red-500", "Error: {e}" }
-                        },
-                        None => rsx! {},
-                    }
+                if let Some(tmpl) = template() {
+                textarea {
+                    class: "w-full h-96 p-4 font-mono text-sm text-gray-800 bg-gray-50 border-0 focus:outline-none focus:ring-0 resize-y",
+                    spellcheck: false,
+                    value: "{tmpl.content}",
+                    oninput: move |evt| {
+                        let mut writable = template.write();
+                        if let Some(t) = writable.deref_mut() {
+                            t.content = evt.value();
+                        }
+                    },
+                }
                 }
             }
 
-            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                div { class: "p-4 border-b border-gray-100",
-                    span { class: "text-sm font-medium text-gray-700", "Preview" }
+            div { class: "flex items-center gap-3",
+                button {
+                    class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
+                    disabled: selected_device().is_none(),
+                    onclick: move |_| on_preview.call(()),
+                    "Preview"
                 }
-                div { class: "p-4 bg-gray-50",
-                    if let Some(ref dev) = selected_device() {
-                        div {
-                            class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
-                            style: "width: {dev.width}px; height: {dev.height}px;",
-                            if preview_loading() {
-                                div { class: "flex flex-col items-center justify-center gap-2",
-                                    div { class: "w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
-                                    p { class: "text-xs text-gray-300", "Rendering..." }
-                                }
-                            } else {
-                                match preview_b64() {
-                                    Some(b64) => rsx! {
-                                        img {
-                                            src: "data:image/bmp;base64,{b64}",
-                                            alt: "Template preview",
-                                            class: "max-w-none",
-                                            style: "image-rendering: pixelated;",
-                                        }
-                                    },
-                                    None => rsx! {
-                                        p { class: "text-gray-300 text-sm", "No preview available" }
-                                    },
-                                }
+                button {
+                    class: "inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors",
+                    onclick: move |_| on_save.call(()),
+                    "Save"
+                }
+                match save_status() {
+                    Some(Ok(())) => rsx! {
+                        span { class: "text-sm text-green-600", "Saved!" }
+                    },
+                    Some(Err(e)) => rsx! {
+                        span { class: "text-sm text-red-500", "Error: {e}" }
+                    },
+                    None => rsx! {},
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn TemplatePreview(
+    selected_device: Signal<Option<Device>>,
+    preview_loading: Signal<bool>,
+    preview_b64: Signal<Option<String>>,
+) -> Element {
+    rsx! {
+        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+            div { class: "p-4 border-b border-gray-100",
+                span { class: "text-sm font-medium text-gray-700", "Preview" }
+            }
+            div { class: "p-4 bg-gray-50",
+                if let Some(ref dev) = selected_device() {
+                    div {
+                        class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
+                        style: "width: {dev.width}px; height: {dev.height}px;",
+                        if preview_loading() {
+                            div { class: "flex flex-col items-center justify-center gap-2",
+                                div { class: "w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
+                                p { class: "text-xs text-gray-300", "Rendering..." }
+                            }
+                        } else {
+                            match preview_b64() {
+                                Some(b64) => rsx! {
+                                    img {
+                                        src: "data:image/bmp;base64,{b64}",
+                                        alt: "Template preview",
+                                        class: "max-w-none",
+                                        style: "image-rendering: pixelated;",
+                                    }
+                                },
+                                None => rsx! {
+                                    p { class: "text-gray-300 text-sm", "No preview available" }
+                                },
                             }
                         }
                     }
