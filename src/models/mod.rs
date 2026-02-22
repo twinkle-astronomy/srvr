@@ -2,36 +2,21 @@
 use sqlx::FromRow;
 
 use chrono::NaiveDateTime;
-use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "server")]
+pub mod server;
+#[cfg(feature = "server")]
+pub use server::*;
 
 #[cfg_attr(feature = "server", derive(FromRow))]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Template {
-    id: i64,
-    pub(crate) content: String,
-    created_at: NaiveDateTime,
-    updated_at: NaiveDateTime,
+    pub id: i64,
+    pub content: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
-
-#[cfg(feature = "server")]
-use liquid::{Error, Object};
-#[cfg(feature = "server")]
-use liquid::ParserBuilder;
-#[cfg(feature = "server")]
-impl Template {
-    pub fn render(&self, globals: Object) -> Result<String, Error> {
-        
-
-        let parser = ParserBuilder::with_stdlib().build()?;
-
-        let template = parser.parse(&self.content)?;
-
-        Ok(template.render(&globals)?)
-    }
-}
-
 
 
 #[cfg_attr(feature = "server", derive(FromRow))]

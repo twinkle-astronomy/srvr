@@ -2,7 +2,7 @@ use chrono::Utc;
 use dioxus::prelude::*;
 use thiserror::Error;
 
-use crate::{data_sources::get_prometheus, db::get_template, models::Device};
+use crate::{data_sources::get_prometheus, models::{Device, TemplateAble}};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -16,18 +16,18 @@ pub enum Error {
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
 pub async fn render_screen(
-    device: &Device
+    device: &Device,
+    template: &impl TemplateAble
 ) -> Result<Vec<u8>, Error> {
-    let template = get_template().await?;
-
     let now = Utc::now();
     let globals = liquid::object!({
-        "width": device.width,
-        "height": device.height,
+        "device": device.get_render_obj(),
+        // "width": device.width,
+        // "height": device.height,
         "time": now.format("%H:%M:%S UTC").to_string(),
         "date": now.format("%Y-%m-%d").to_string(),
         "scrape_duration": get_prometheus().await,
-        "fw_version": device.fw_version,
+        // "fw_version": device.fw_version,
     });
 
     // Render SVG from template

@@ -109,6 +109,20 @@ pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
         .await
 }
 
+pub async fn update_template(id: i64, content: &str) -> Result<(), sqlx::error::Error> {
+    let conn = get();
+
+    sqlx::query(
+        "UPDATE templates SET content = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(content)
+    .bind(id)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn get_or_create_device(
     access_token: &str,
     mac_address: Option<&str>,

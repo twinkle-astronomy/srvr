@@ -6,7 +6,7 @@ use crate::frontend::Route;
 pub fn Nav() -> Element {
     rsx! {
         nav { class: "bg-gray-950 sticky top-0 z-50 border-b border-gray-800",
-            div { class: "max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center h-14 gap-8",
+            div { class: "max-w-full mx-auto px-4 sm:px-6 lg:px-8 flex items-center h-14 gap-8",
                 Link {
                     class: "text-white font-bold text-lg tracking-tight hover:text-gray-300 transition-colors",
                     to: Route::Dashboard {},
@@ -16,6 +16,7 @@ pub fn Nav() -> Element {
                     NavLink { to: Route::Dashboard {}, label: "Dashboard" }
                     NavLink { to: Route::ApiInfo {}, label: "API" }
                     NavLink { to: Route::Devices {}, label: "Devices" }
+                    NavLink { to: Route::TemplateEditor {}, label: "Template" }
                 }
             }
         }

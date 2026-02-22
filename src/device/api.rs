@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
-    db::get_device, device::{device_from_headers, renderer}
+    db::{get_device, get_template}, device::{device_from_headers, renderer}
 };
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
@@ -392,7 +392,15 @@ async fn render_screen_handler(
         }
     };
 
-    match renderer::render_screen(&device).await {
+    let template = match get_template().await {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Error: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
+        }
+    };
+
+    match renderer::render_screen(&device, &template).await {
         Ok(image) => (StatusCode::OK, [("Content-Type", "image/bmp")], image).into_response(),
         Err(e) => {
             error!("Error: {:?}", e);

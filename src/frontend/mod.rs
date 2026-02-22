@@ -4,7 +4,7 @@ pub mod server_fns;
 
 use dioxus::prelude::*;
 
-use pages::{ApiInfo, Dashboard, Devices};
+use pages::{ApiInfo, Dashboard, Devices, TemplateEditor};
 
 #[derive(Routable, Clone, PartialEq, Debug)]
 #[rustfmt::skip]
@@ -16,6 +16,8 @@ enum Route {
         ApiInfo {},
         #[route("/devices")]
         Devices {},
+        #[route("/template")]
+        TemplateEditor {},
     #[end_layout]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
@@ -33,7 +35,7 @@ pub fn App() -> Element {
 fn NavLayout() -> Element {
     rsx! {
         components::Nav {}
-        main { class: "max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8",
+        main { class: "max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8",
             Outlet::<Route> {}
         }
     }
