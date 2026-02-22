@@ -2,10 +2,11 @@ use std::sync::OnceLock;
 
 use dioxus::prelude::*;
 use sqlx::{
-    FromRow, SqlitePool, sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow}
+    FromRow, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::models::{Device, Template};
+use crate::models::{Device, PrometheusQuery, Template};
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -112,13 +113,11 @@ pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
 pub async fn update_template(id: i64, content: &str) -> Result<(), sqlx::error::Error> {
     let conn = get();
 
-    sqlx::query(
-        "UPDATE templates SET content = ?, updated_at = datetime('now') WHERE id = ?",
-    )
-    .bind(content)
-    .bind(id)
-    .execute(conn)
-    .await?;
+    sqlx::query("UPDATE templates SET content = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(content)
+        .bind(id)
+        .execute(conn)
+        .await?;
 
     Ok(())
 }
@@ -134,7 +133,7 @@ pub async fn get_or_create_device(
     battery_voltage: Option<f32>,
     rssi: Option<&str>,
 ) -> Result<Device, sqlx::error::Error> {
-    if  let Ok(Some(device)) = get_device_by_token(access_token).await {
+    if let Ok(Some(device)) = get_device_by_token(access_token).await {
         return Ok(device);
     }
 
@@ -164,5 +163,18 @@ pub async fn get_or_create_device(
     .await?;
 
     Device::from_row(&device_id)
-    
+}
+
+pub async fn get_prometheus_queries(
+    template_id: i64,
+) -> Result<Vec<PrometheusQuery>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, template_id, name, addr, query, created_at, updated_at \
+         FROM prometheus_queries
+         WHERE template_id = ?
+         ORDER BY name",
+    )
+    .bind(template_id)
+    .fetch_all(get())
+    .await
 }

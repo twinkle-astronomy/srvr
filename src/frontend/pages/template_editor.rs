@@ -18,10 +18,15 @@ pub fn TemplateEditor() -> Element {
     let mut fetch_preview = move || {
         if let Some(device) = selected_device.peek().clone() {
             if let Some(tmpl) = template() {
-                let content = tmpl.content.clone();
+                let template = Template {
+                    id: tmpl.id,
+                    content: tmpl.content.clone(),
+                    created_at: tmpl.created_at.clone(),
+                    updated_at: tmpl.updated_at.clone(),
+                };
                 preview_loading.set(true);
                 spawn(async move {
-                    match get_template_preview(device.id, content).await {
+                    match get_template_preview(device.id, template).await {
                         Ok(b64) => preview_b64.set(b64),
                         Err(e) => {
                             tracing::error!("Preview error: {e}");

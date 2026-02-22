@@ -53,7 +53,12 @@ pub fn ApiInfo() -> Element {
 }
 
 #[component]
-fn Endpoint(method: &'static str, path: &'static str, description: &'static str, headers: Vec<&'static str>) -> Element {
+fn Endpoint(
+    method: &'static str,
+    path: &'static str,
+    description: &'static str,
+    headers: Vec<&'static str>,
+) -> Element {
     let method_classes = match method {
         "POST" => "bg-blue-50 text-blue-700 ring-blue-600/20",
         _ => "bg-emerald-50 text-emerald-700 ring-emerald-600/20",

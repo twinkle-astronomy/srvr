@@ -6,8 +6,18 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
 pub mod server;
-#[cfg(feature = "server")]
-pub use server::*;
+
+#[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrometheusQuery {
+    pub id: i64,
+    pub name: String,
+    pub template_id: i64,
+    pub addr: String,
+    pub query: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
 
 #[cfg_attr(feature = "server", derive(FromRow))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -17,7 +27,6 @@ pub struct Template {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
-
 
 #[cfg_attr(feature = "server", derive(FromRow))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -41,13 +50,13 @@ impl Device {
         self.battery_voltage.map(|battery_voltage| {
             let pct_charged = (battery_voltage - 3.) / 0.012;
 
-        match pct_charged {
-            88.0..=f32::INFINITY => 100.0,
-            85.0..88.0 => 95.0,
-            83.0..85.0 => 90.0,
-            10.0..83.0 => pct_charged,
-            _ => 0.0,
-        }
-        } )
+            match pct_charged {
+                88.0..=f32::INFINITY => 100.0,
+                85.0..88.0 => 95.0,
+                83.0..85.0 => 90.0,
+                10.0..83.0 => pct_charged,
+                _ => 0.0,
+            }
+        })
     }
 }

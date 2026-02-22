@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
-    db::{get_device, get_template}, device::{device_from_headers, renderer}
+    db::{get_device, get_template},
+    device::{device_from_headers, renderer},
 };
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
@@ -116,7 +117,10 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let image_url = format!("http://{}/render/screen.bmp?device_id={}&t={}", host, device.id, timestamp);
+    let image_url = format!(
+        "http://{}/render/screen.bmp?device_id={}&t={}",
+        host, device.id, timestamp
+    );
 
     let response = DisplayResponse {
         image_url: Some(image_url),
@@ -378,17 +382,19 @@ struct RenderQuery {
 }
 
 // GET /render/screen.bmp - Render screen image
-async fn render_screen_handler(
-    Query(params): Query<RenderQuery>
-) -> impl IntoResponse {
+async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
     let device = match get_device(params.device_id).await {
         Ok(Some(d)) => d,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, format!("Unable to find device with id: {}", params.device_id)).into_response()
+            return (
+                StatusCode::NOT_FOUND,
+                format!("Unable to find device with id: {}", params.device_id),
+            )
+                .into_response();
         }
         Err(e) => {
             error!("Error: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response();
         }
     };
 
@@ -396,7 +402,7 @@ async fn render_screen_handler(
         Ok(t) => t,
         Err(e) => {
             error!("Error: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response();
         }
     };
 
@@ -405,6 +411,6 @@ async fn render_screen_handler(
         Err(e) => {
             error!("Error: {:?}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
-        },
+        }
     }
 }

@@ -12,13 +12,6 @@ pub struct ServerInfo {
 }
 
 #[server]
-pub async fn get_temperature() -> Result<Option<f64>, ServerFnError> {
-    use crate::data_sources::get_prometheus;
-
-    Ok(get_prometheus().await)
-}
-
-#[server]
 pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, ServerFnError> {
     use crate::db::{get_device, get_template};
     use base64::Engine;
@@ -49,7 +42,7 @@ pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, Server
 #[server]
 pub async fn get_template_preview(
     device_id: i64,
-    template: String,
+    template: Template,
 ) -> Result<Option<String>, ServerFnError> {
     use crate::db::get_device;
     use base64::Engine;
@@ -61,7 +54,7 @@ pub async fn get_template_preview(
             ServerFnError::new(format!("Unable to find device with id: {:?}", device_id))
         })?;
 
-    match crate::device::renderer::render_screen(&device, &template.as_str()).await {
+    match crate::device::renderer::render_screen(&device, &template).await {
         Ok(bmp_bytes) => {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
             Ok(Some(encoded))

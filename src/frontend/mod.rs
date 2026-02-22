@@ -1,5 +1,5 @@
-mod pages;
 mod components;
+mod pages;
 pub mod server_fns;
 
 use dioxus::prelude::*;

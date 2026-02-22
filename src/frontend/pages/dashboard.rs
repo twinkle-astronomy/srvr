@@ -1,16 +1,10 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{get_server_info, get_temperature};
+use crate::frontend::server_fns::get_server_info;
 
 #[component]
 pub fn Dashboard() -> Element {
-    let temperature = use_server_future(move || {
-        get_temperature()
-    })?;
-
-    let server_info = use_server_future(move || {
-        get_server_info()
-    })?;
+    let server_info = use_server_future(move || get_server_info())?;
 
     rsx! {
         div { class: "mb-8",
@@ -51,59 +45,6 @@ pub fn Dashboard() -> Element {
                     None => rsx! { LoadingSpinner {} },
                 }
             }
-
-            // Temperature card
-            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col items-center justify-center",
-                h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4 self-start", "Front Porch Temperature" }
-                match temperature() {
-                    Some(Ok(Some(t))) => rsx! {
-                        div { class: "flex items-baseline gap-1 py-6",
-                            span { class: "text-6xl font-bold text-gray-900 tabular-nums", "{t:.1}" }
-                            span { class: "text-2xl font-light text-gray-400", "\u{00b0}F" }
-                        }
-                    },
-                    Some(Ok(None)) => rsx! {
-                        div { class: "py-8",
-                            span { class: "text-4xl text-gray-300 font-light", "N/A" }
-                        }
-                    },
-                    Some(Err(e)) => rsx! {
-                        p { class: "text-red-400 text-sm py-8", "Error: {e}" }
-                    },
-                    None => rsx! { LoadingSpinner {} },
-                }
-            }
-
-            // Screen preview card (full width)
-            // div { class: "md:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6",
-            //     div { class: "flex items-center justify-between mb-4",
-            //         h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider", "Screen Preview" }
-            //         button {
-            //             class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-            //             onclick: move |_| refresh_count += 1,
-            //             "Refresh"
-            //         }
-            //     }
-            //     div { class: "bg-gray-50 rounded-lg p-4 flex items-center justify-center",
-            //         match screen() {
-            //             Some(Ok(Some(b64))) => rsx! {
-            //                 img {
-            //                     src: "data:image/bmp;base64,{b64}",
-            //                     alt: "Current e-ink screen",
-            //                     class: "max-w-full h-auto border border-gray-200 rounded",
-            //                     style: "image-rendering: pixelated;",
-            //                 }
-            //             },
-            //             Some(Ok(None)) => rsx! {
-            //                 div { class: "py-16 text-gray-400 text-sm", "Unable to render screen preview" }
-            //             },
-            //             Some(Err(e)) => rsx! {
-            //                 div { class: "py-16 text-red-400 text-sm", "Error: {e}" }
-            //             },
-            //             None => rsx! { LoadingSpinner {} },
-            //         }
-            //     }
-            // }
         }
     }
 }

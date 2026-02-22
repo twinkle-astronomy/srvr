@@ -1,12 +1,9 @@
-
 #[cfg(feature = "server")]
 mod db;
 #[cfg(feature = "server")]
 mod device;
 mod frontend;
 mod models;
-#[cfg(feature="server")]
-mod data_sources;
 
 fn main() {
     #[cfg(feature = "server")]
@@ -47,7 +44,10 @@ fn main() {
             let device_api = crate::device::api::router();
 
             let router = dioxus::server::router(frontend::App)
-                .route("/metrics", get(move || async move { metric_handle.render() }))
+                .route(
+                    "/metrics",
+                    get(move || async move { metric_handle.render() }),
+                )
                 .merge(device_api)
                 .layer(TraceLayer::new_for_http())
                 .layer(prometheus_layer)

@@ -1,8 +1,14 @@
+use std::collections::HashMap;
+
 use chrono::Utc;
 use dioxus::prelude::*;
+use liquid::Object;
 use thiserror::Error;
 
-use crate::{data_sources::get_prometheus, models::{Device, TemplateAble}};
+use crate::{
+    db,
+    models::{Device, Template},
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -11,14 +17,19 @@ pub enum Error {
     #[error("{0}")]
     UsvgError(#[from] usvg::Error),
     #[error("{0}")]
-    DbError(#[from] sqlx::error::Error)
+    DbError(#[from] sqlx::error::Error),
+    #[error("{0}")]
+    PrometheusError(#[from] prometheus_http_query::error::Error),
 }
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(
-    device: &Device,
-    template: &impl TemplateAble
-) -> Result<Vec<u8>, Error> {
+pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u8>, Error> {
+    let prometheus_queries = db::get_prometheus_queries(template.id).await?;
+    let mut prometheus_data: HashMap<String, Vec<Object>> =
+        HashMap::with_capacity(prometheus_queries.len());
+    for query in prometheus_queries {
+        prometheus_data.insert(query.name.clone(), query.get_render_obj().await?);
+    }
     let now = Utc::now();
     let globals = liquid::object!({
         "device": device.get_render_obj(),
@@ -26,7 +37,7 @@ pub async fn render_screen(
         // "height": device.height,
         "time": now.format("%H:%M:%S UTC").to_string(),
         "date": now.format("%Y-%m-%d").to_string(),
-        "scrape_duration": get_prometheus().await,
+        "prometheus": liquid::object!(prometheus_data),
         // "fw_version": device.fw_version,
     });
 
