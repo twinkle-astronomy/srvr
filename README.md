@@ -42,7 +42,7 @@ A docker image is available at https://github.com/twinkle-astronomy/srvr/pkgs/co
 ```yml
 services:
   srvr:
-    image: ghcr.io/twinkle-astronomy/srvr:v0.0.7
+    image: ghcr.io/twinkle-astronomy/srvr:0.0.8
     volumes:
       - srvr-data:/data
     init: true
