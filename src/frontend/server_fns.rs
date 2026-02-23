@@ -11,6 +11,13 @@ pub struct ServerInfo {
     pub port: u16,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TemplateVar {
+    pub path: String,
+    pub value: String,
+    pub is_error: bool,
+}
+
 #[server]
 pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, ServerFnError> {
     use crate::db::{get_device, get_template};
@@ -182,6 +189,86 @@ pub async fn execute_prometheus_queries(
     }
 
     Ok(results)
+}
+
+#[server]
+pub async fn get_template_context(
+    device_id: i64,
+    template_id: i64,
+) -> Result<Vec<TemplateVar>, ServerFnError> {
+    use chrono::Utc;
+    use crate::models::PrometheusMetricResult;
+
+    let device = crate::db::get_device(device_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .ok_or_else(|| ServerFnError::new(format!("Device {device_id} not found")))?;
+
+    let now = Utc::now();
+
+    let queries = crate::db::get_prometheus_queries(template_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+    let mut vars = vec![
+        TemplateVar { path: "time".into(),              value: now.format("%H:%M:%S UTC").to_string(), is_error: false },
+        TemplateVar { path: "date".into(),              value: now.format("%Y-%m-%d").to_string(),     is_error: false },
+        TemplateVar { path: "device.width".into(),      value: device.width.to_string(),               is_error: false },
+        TemplateVar { path: "device.height".into(),     value: device.height.to_string(),              is_error: false },
+        TemplateVar { path: "device.fw_version".into(), value: device.fw_version.unwrap_or_else(|| "nil".into()), is_error: false },
+    ];
+
+    for query in &queries {
+        let client = match prometheus_http_query::Client::try_from(query.addr.as_str()) {
+            Ok(c) => c,
+            Err(e) => {
+                vars.push(TemplateVar {
+                    path: format!("prometheus.{}", query.name),
+                    value: format!("invalid address: {e}"),
+                    is_error: true,
+                });
+                continue;
+            }
+        };
+        match client.query(query.query.as_str()).get().await {
+            Ok(response) => {
+                let metrics: Vec<PrometheusMetricResult> = response
+                    .data()
+                    .as_vector()
+                    .map(|v| v.iter().map(|x| PrometheusMetricResult {
+                        labels: x.metric().clone(),
+                        value: x.sample().value(),
+                    }).collect())
+                    .unwrap_or_default();
+
+                for (i, metric) in metrics.iter().enumerate() {
+                    vars.push(TemplateVar {
+                        path: format!("prometheus.{}[{i}].value", query.name),
+                        value: metric.value.to_string(),
+                        is_error: false,
+                    });
+                    let mut labels: Vec<_> = metric.labels.iter().collect();
+                    labels.sort_by_key(|(k, _)| k.as_str());
+                    for (k, v) in labels {
+                        vars.push(TemplateVar {
+                            path: format!("prometheus.{}[{i}].labels.{k}", query.name),
+                            value: v.clone(),
+                            is_error: false,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                vars.push(TemplateVar {
+                    path: format!("prometheus.{}", query.name),
+                    value: e.to_string(),
+                    is_error: true,
+                });
+            }
+        }
+    }
+
+    Ok(vars)
 }
 
 #[server]

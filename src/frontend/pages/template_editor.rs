@@ -4,8 +4,8 @@ use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
     create_prometheus_query, delete_prometheus_query, execute_prometheus_queries, get_devices,
-    get_prometheus_queries_for_template, get_template, get_template_preview, save_template,
-    update_prometheus_query,
+    get_prometheus_queries_for_template, get_template, get_template_context, get_template_preview,
+    save_template, update_prometheus_query, TemplateVar,
 };
 use crate::models::{Device, PrometheusQuery, PrometheusQueryResult, Template};
 use dioxus::logger::tracing::info;
@@ -123,6 +123,35 @@ fn TemplateForm(
     on_preview: EventHandler,
     on_save: EventHandler,
 ) -> Element {
+    let mut vars_open = use_signal(|| false);
+    let mut ctx_vars: Signal<Vec<TemplateVar>> = use_signal(Vec::new);
+    let mut ctx_loading = use_signal(|| false);
+
+    let mut fetch_ctx = move || {
+        let device_id = selected_device.peek().as_ref().map(|d| d.id);
+        let template_id = template.peek().as_ref().map(|t| t.id);
+        if let (Some(did), Some(tid)) = (device_id, template_id) {
+            ctx_vars.set(vec![]);
+            ctx_loading.set(true);
+            spawn(async move {
+                match get_template_context(did, tid).await {
+                    Ok(vars) => ctx_vars.set(vars),
+                    Err(e) => tracing::error!("Failed to get template context: {e}"),
+                }
+                ctx_loading.set(false);
+            });
+        }
+    };
+
+    use_effect(move || {
+        let _ = selected_device();
+        if vars_open() {
+            fetch_ctx();
+        }
+    });
+
+    let vars = ctx_vars();
+
     rsx! {
         div { class: "flex-1 min-w-0 flex flex-col gap-4",
             div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
@@ -164,6 +193,47 @@ fn TemplateForm(
                         }
                     },
                 }
+                }
+            }
+
+            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                button {
+                    class: "w-full px-4 py-2.5 flex items-center justify-between text-left hover:bg-gray-50 transition-colors",
+                    onclick: move |_| vars_open.set(!vars_open()),
+                    span { class: "text-xs font-medium text-gray-600", "Available Template Variables" }
+                    span { class: "text-xs text-gray-400", if vars_open() { "▲" } else { "▼" } }
+                }
+                if vars_open() {
+                    div { class: "border-t border-gray-100 p-4",
+                        if ctx_loading() {
+                            p { class: "text-xs text-gray-400 mb-3 italic", "Fetching values..." }
+                        }
+                        if !vars.is_empty() {
+                            table { class: "w-full text-xs",
+                                thead {
+                                    tr { class: "text-left text-gray-400 border-b border-gray-100",
+                                        th { class: "pb-1.5 font-medium pr-4", "Variable" }
+                                        th { class: "pb-1.5 font-medium", "Value" }
+                                    }
+                                }
+                                tbody { class: "divide-y divide-gray-50",
+                                    for var in vars.iter() {
+                                        tr {
+                                            td { class: "py-1.5 pr-4",
+                                                code { class: "text-blue-700 bg-blue-50 px-1 rounded",
+                                                    {format!("{{{{ {} }}}}", var.path)}
+                                                }
+                                            }
+                                            td {
+                                                class: if var.is_error { "py-1.5 font-mono text-red-500" } else { "py-1.5 font-mono text-gray-700" },
+                                                "{var.value}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
