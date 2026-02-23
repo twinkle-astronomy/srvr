@@ -28,16 +28,12 @@ docker compose exec -it srvr /bin/bash
 For development with automatic reloading on file changes:
 
 ```bash
-cargo watch -x run
+dx serve --addr 0.0.0.0
 ```
 
 The server will start on `http://localhost:8080`
 
 ## Development
-
-### Modifying the Screen Content
-
-Edit the `render_screen_handler()` function in `src/main.rs` to customize the SVG content. The SVG is rendered to a 1-bit bitmap suitable for e-ink displays.
 
 ### Environment Variables
 
@@ -45,6 +41,34 @@ Edit the `render_screen_handler()` function in `src/main.rs` to customize the SV
   ```bash
   RUST_LOG=debug cargo run
   ```
+
+## Deployment
+
+### Docker image
+
+A docker image is available at https://github.com/twinkle-astronomy/srvr/pkgs/container/srvr
+
+To save state the system will create a sqlite database at /data.  To persist it between runs use a volume mount.
+
+```yml
+services:
+  srvr:
+    image: ghcr.io/twinkle-astronomy/srvr:main
+    volumes:
+      - srvr-data:/data
+    init: true
+    ports:
+      - "80:8080"
+    environment:
+      - DATABASE_URL=sqlite:///data/data.db
+
+
+volumes:
+  srvr-data:
+```
+
+The service will be available at the machine's IP, port 80.
+
 
 ## License
 
