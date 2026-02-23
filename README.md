@@ -39,6 +39,7 @@ The server will start on `http://localhost:8080`
 
 A docker image is available at https://github.com/twinkle-astronomy/srvr/pkgs/container/srvr
 
+Use this docker-compose.yml to spin up a simple instance.
 ```yml
 services:
   srvr:
