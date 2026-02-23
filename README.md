@@ -1,6 +1,6 @@
 # TRMNL eink Display API Server
 
-A Rust-based API server that implements the [TRMNL eink display API](https://trmnl.com/api-docs/index.html) for serving content to 800x480 e-ink displays.
+A Rust-based API server that implements the [TRMNL eink display API](https://trmnl.com/api-docs/index.html) for serving content to TRMNL e-ink displays.
 
 ## Features
 
@@ -9,11 +9,11 @@ A Rust-based API server that implements the [TRMNL eink display API](https://trm
 - **Real-time rendering** - Generates screen images on-demand
 - **Docker support** - Containerized development and deployment
 
-## Quick Start
-
-### Prerequisites
+## Prerequisites
 
 - Docker and Docker Compose
+
+## Development
 
 ### Running with Docker
 
@@ -33,22 +33,11 @@ dx serve --addr 0.0.0.0
 
 The server will start on `http://localhost:8080`
 
-## Development
-
-### Environment Variables
-
-- `RUST_LOG` - Set logging level (default: `info,tower_http=debug`)
-  ```bash
-  RUST_LOG=debug cargo run
-  ```
-
 ## Deployment
 
 ### Docker image
 
 A docker image is available at https://github.com/twinkle-astronomy/srvr/pkgs/container/srvr
-
-To save state the system will create a sqlite database at /data.  To persist it between runs use a volume mount.
 
 ```yml
 services:
