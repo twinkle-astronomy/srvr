@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{get_devices, get_screen_preview};
+use crate::frontend::server_fns::get_devices;
 use crate::models::Device;
 
 #[component]
@@ -65,12 +65,6 @@ pub fn Devices() -> Element {
 
 #[component]
 fn DeviceCard(device: Device, refresh_count: Signal<u32>) -> Element {
-    let device_id = device.id;
-    let preview = use_server_future(move || {
-        let _ = refresh_count();
-        get_screen_preview(device_id)
-    })?;
-
     rsx! {
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
             // Device info
@@ -121,32 +115,6 @@ fn DeviceCard(device: Device, refresh_count: Signal<u32>) -> Element {
                 }
 
                 p { class: "text-xs text-gray-400 mt-3", "Last seen {device.last_seen_at}" }
-            }
-
-            // Preview
-            div { class: "bg-gray-50 p-4 flex items-center justify-center border-t border-gray-100",
-                match preview() {
-                    Some(Ok(Some(b64))) => rsx! {
-                        img {
-                            src: "data:image/bmp;base64,{b64}",
-                            alt: "Screen preview for {device.friendly_id}",
-                            class: "w-full h-auto border border-gray-200 rounded shadow-sm",
-                            style: "image-rendering: pixelated;",
-                        }
-                    },
-                    Some(Ok(None)) => rsx! {
-                        div { class: "py-8 text-gray-300 text-xs", "No preview" }
-                    },
-                    Some(Err(_)) => rsx! {
-                        div { class: "py-8 text-red-300 text-xs", "Preview failed" }
-                    },
-                    None => rsx! {
-                        div { class: "flex flex-col items-center justify-center py-8 gap-2",
-                            div { class: "w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
-                            p { class: "text-xs text-gray-300", "Rendering..." }
-                        }
-                    },
-                }
             }
         }
     }
