@@ -16,6 +16,10 @@ scrape_configs:
         labels:
           location: "Front Porch"
       - targets:
+        - 'pico-climate-cb41752a.lan:80'
+        labels:
+          location: "Chris Office"
+      - targets:
         - 'pico-climate-93749332.lan:80'
         labels:
           location: "Chris Dev"

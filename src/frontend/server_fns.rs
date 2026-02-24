@@ -80,7 +80,7 @@ mod utils {
                 }
                 liquid::model::Value::Array(values) => {
                     for (i, value) in values.iter().enumerate() {
-                        value_to_template_var(&format!("{prefix}[{}]", i + 1), &mut scalar_vars, value)
+                        value_to_template_var(&format!("{prefix}[{i}]"), &mut scalar_vars, value)
                     }
                 }
                 liquid::model::Value::Object(object) => {
