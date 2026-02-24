@@ -22,8 +22,7 @@ pub enum Error {
     PrometheusError(#[from] prometheus_http_query::error::Error),
 }
 
-/// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u8>, Error> {
+pub async fn render_vars(device: &Device, template: &Template) -> Result<Object, Error> {
     let prometheus_queries = db::get_prometheus_queries(template.id).await?;
     let mut prometheus_data: HashMap<String, Vec<Object>> =
         HashMap::with_capacity(prometheus_queries.len());
@@ -31,7 +30,7 @@ pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u
         prometheus_data.insert(query.name.clone(), query.get_render_obj().await?);
     }
     let now = Utc::now();
-    let globals = liquid::object!({
+    Ok(liquid::object!({
         "device": device.get_render_obj(),
         // "width": device.width,
         // "height": device.height,
@@ -39,10 +38,14 @@ pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u
         "date": now.format("%Y-%m-%d").to_string(),
         "prometheus": liquid::object!(prometheus_data),
         // "fw_version": device.fw_version,
-    });
+    }))
+}
 
+/// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
+pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u8>, Error> {
+    
     // Render SVG from template
-    let svg_data = template.render(globals)?;
+    let svg_data = template.render(render_vars(device, template).await?)?;
 
     Ok(svg_to_bmp(&svg_data)?)
 }

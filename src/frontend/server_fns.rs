@@ -18,6 +18,84 @@ pub struct TemplateVar {
     pub is_error: bool,
 }
 
+#[cfg(feature = "server")]
+mod utils {
+    use itertools::Itertools;
+    use liquid::{
+        Object,
+        model::{ScalarCow, Value},
+    };
+
+    use crate::frontend::server_fns::TemplateVar;
+
+    fn scalar_to_template_var(prefix: &String, value: &ScalarCow<'static>) -> TemplateVar {
+        TemplateVar {
+            path: prefix.clone(),
+            value: value.clone().into_string().into_string(),
+            is_error: false,
+        }
+    }
+
+    fn nil_to_template_var(prefix: &String) -> TemplateVar {
+        TemplateVar {
+            path: prefix.clone(),
+            value: "None".to_string(),
+            is_error: false,
+        }
+    }
+
+    fn value_to_template_var(prefix: &String, vars: &mut Vec<TemplateVar>, value: &Value) {
+        match value {
+            liquid::model::Value::Scalar(scalar_cow) => {
+                vars.push(scalar_to_template_var(prefix, scalar_cow))
+            }
+            liquid::model::Value::Array(values) => {
+                for (i, value) in values.iter().enumerate() {
+                    value_to_template_var(&format!("{prefix}[{i}]"), vars, value)
+                }
+            }
+            liquid::model::Value::Object(object) => {
+                obj_to_template_var(&format!("{prefix}"), vars, object)
+            }
+            liquid::model::Value::State(_) => unreachable!(),
+            liquid::model::Value::Nil => vars.push(nil_to_template_var(prefix)),
+        }
+    }
+    pub fn obj_to_template_var(prefix: &String, vars: &mut Vec<TemplateVar>, obj: &Object) {
+        let mut scalar_vars = vec![];
+        let mut object_vars = vec![];
+
+        for (key, value) in obj
+            .iter()
+            .sorted_by(|(key_l, _), (key_r, _)| key_l.cmp(key_r))
+        {
+            let prefix = if prefix.len() > 0 {
+                format!("{prefix}.{key}")
+            } else {
+                format!("{key}")
+            };
+            match value {
+                liquid::model::Value::Scalar(scalar_cow) => {
+                    scalar_vars.push(scalar_to_template_var(&prefix, scalar_cow))
+                }
+                liquid::model::Value::Array(values) => {
+                    for (i, value) in values.iter().enumerate() {
+                        value_to_template_var(&format!("{prefix}[{}]", i + 1), &mut scalar_vars, value)
+                    }
+                }
+                liquid::model::Value::Object(object) => {
+                    obj_to_template_var(&format!("{prefix}"), &mut object_vars, object)
+                }
+                liquid::model::Value::State(_) => unreachable!(),
+                liquid::model::Value::Nil => vars.push(nil_to_template_var(&prefix)),
+            }
+        }
+
+        vars.append(&mut scalar_vars);
+        vars.append(&mut object_vars);
+    }
+}
+
 #[server]
 pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, ServerFnError> {
     use crate::db::{get_device, get_template};
@@ -61,10 +139,10 @@ pub async fn get_template_preview(
             ServerFnError::new(format!("Unable to find device with id: {:?}", device_id))
         })?;
 
-    let bmp_bytes = crate::device::renderer::render_screen(&device, &template).await
-        .map_err(|e|
-            ServerFnError::new(format!("Unable to render screen: {}", e)))?;
-        
+    let bmp_bytes = crate::device::renderer::render_screen(&device, &template)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to render screen: {}", e)))?;
+
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
     Ok(Some(encoded))
 }
@@ -194,79 +272,25 @@ pub async fn execute_prometheus_queries(
 #[server]
 pub async fn get_template_context(
     device_id: i64,
-    template_id: i64,
+    _: i64,
 ) -> Result<Vec<TemplateVar>, ServerFnError> {
-    use chrono::Utc;
-    use crate::models::PrometheusMetricResult;
+    use crate::{device::renderer::render_vars, frontend::server_fns::utils::obj_to_template_var};
 
     let device = crate::db::get_device(device_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .ok_or_else(|| ServerFnError::new(format!("Device {device_id} not found")))?;
 
-    let now = Utc::now();
-
-    let queries = crate::db::get_prometheus_queries(template_id)
+    let template = crate::db::get_template()
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let mut vars = vec![
-        TemplateVar { path: "time".into(),              value: now.format("%H:%M:%S UTC").to_string(), is_error: false },
-        TemplateVar { path: "date".into(),              value: now.format("%Y-%m-%d").to_string(),     is_error: false },
-        TemplateVar { path: "device.width".into(),      value: device.width.to_string(),               is_error: false },
-        TemplateVar { path: "device.height".into(),     value: device.height.to_string(),              is_error: false },
-        TemplateVar { path: "device.fw_version".into(), value: device.fw_version.unwrap_or_else(|| "nil".into()), is_error: false },
-    ];
-
-    for query in &queries {
-        let client = match prometheus_http_query::Client::try_from(query.addr.as_str()) {
-            Ok(c) => c,
-            Err(e) => {
-                vars.push(TemplateVar {
-                    path: format!("prometheus.{}", query.name),
-                    value: format!("invalid address: {e}"),
-                    is_error: true,
-                });
-                continue;
-            }
-        };
-        match client.query(query.query.as_str()).get().await {
-            Ok(response) => {
-                let metrics: Vec<PrometheusMetricResult> = response
-                    .data()
-                    .as_vector()
-                    .map(|v| v.iter().map(|x| PrometheusMetricResult {
-                        labels: x.metric().clone(),
-                        value: x.sample().value(),
-                    }).collect())
-                    .unwrap_or_default();
-
-                for (i, metric) in metrics.iter().enumerate() {
-                    vars.push(TemplateVar {
-                        path: format!("prometheus.{}[{i}].value", query.name),
-                        value: metric.value.to_string(),
-                        is_error: false,
-                    });
-                    let mut labels: Vec<_> = metric.labels.iter().collect();
-                    labels.sort_by_key(|(k, _)| k.as_str());
-                    for (k, v) in labels {
-                        vars.push(TemplateVar {
-                            path: format!("prometheus.{}[{i}].labels.{k}", query.name),
-                            value: v.clone(),
-                            is_error: false,
-                        });
-                    }
-                }
-            }
-            Err(e) => {
-                vars.push(TemplateVar {
-                    path: format!("prometheus.{}", query.name),
-                    value: e.to_string(),
-                    is_error: true,
-                });
-            }
-        }
-    }
+    let device_obj = render_vars(&device, &template)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    // device_obj.
+    let mut vars: Vec<TemplateVar> = vec![];
+    obj_to_template_var(&"".to_string(), &mut vars, &device_obj);
 
     Ok(vars)
 }

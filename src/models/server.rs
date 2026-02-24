@@ -20,6 +20,11 @@ impl Device {
             "width": self.width,
             "height": self.height,
             "fw_version": self.fw_version,
+            "rssi": self.rssi,
+            "friendly_id": self.friendly_id,
+            "mac_address": self.mac_address,
+            "battery_voltage": self.battery_voltage,
+            "battery_percent_charged": self.percent_charged(),
         })
     }
 }

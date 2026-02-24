@@ -4625,6 +4625,7 @@ dependencies = [
  "chrono",
  "dioxus",
  "image",
+ "itertools",
  "liquid",
  "prometheus-http-query",
  "resvg",
