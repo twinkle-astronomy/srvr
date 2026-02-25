@@ -37,7 +37,7 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
     
     Ok(liquid::object!({
         "device": device.get_render_obj(),
-        "time": time_in_tz.format("%I:%M %P").to_string().strip_prefix("0"),
+        "time": time_in_tz.format("%I:%M %P").to_string(),
         "timezone": time_in_tz.format("%Z").to_string(),
         "date": time_in_tz.format("%Y-%m-%d").to_string(),
         "prometheus": liquid::object!(prometheus_data),

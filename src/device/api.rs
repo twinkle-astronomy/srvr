@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use tracing::{error, info};
@@ -18,7 +18,6 @@ use crate::{
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
     Router::new()
         .route("/api/display", get(display_handler))
-        .route("/api/display/current", get(display_current_handler))
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
@@ -33,18 +32,6 @@ struct DisplayResponse {
     refresh_rate: u32,
     update_firmware: bool,
     maximum_compatibility: bool,
-}
-
-#[derive(Serialize)]
-struct DisplayCurrentResponse {
-    status: u16,
-    refresh_rate: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    filename: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rendered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize)]
@@ -128,74 +115,6 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         refresh_rate: 5 * 60,
         update_firmware: false,
         maximum_compatibility: false,
-    };
-
-    (StatusCode::OK, Json(response)).into_response()
-}
-
-// GET /api/display/current - Fetch the current screen
-async fn display_current_handler(headers: HeaderMap) -> impl IntoResponse {
-    // Extract required Access-Token header
-    let access_token = match headers.get("Access-Token") {
-        Some(token) => token.to_str().unwrap_or(""),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "error": "Missing Access-Token header"
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    // Upsert last_seen in database (fire-and-forget)
-    let db = crate::db::get().clone();
-    let token = access_token.to_string();
-    let _ = sqlx::query(
-        "INSERT INTO devices (access_token, mac_address, model, friendly_id) \
-            VALUES (?, 'unknown', 'unknown', 'unknown') \
-            ON CONFLICT(access_token) DO UPDATE SET \
-            last_seen_at = datetime('now'), \
-            updated_at = datetime('now')",
-    )
-    .bind(&token)
-    .execute(&db)
-    .await;
-
-    // Get device dimensions and firmware version if available
-    let device_width = headers
-        .get("Width")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("800");
-    let device_height = headers
-        .get("Height")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("480");
-    let fw_version = headers
-        .get("FW-Version")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("unknown");
-
-    // Get the host from the request headers to build the correct image URL
-    let host = headers
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:8080");
-
-    // Add timestamp for cache busting and device dimensions
-    let timestamp = Utc::now().timestamp();
-    let image_url = format!(
-        "http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
-        host, device_width, device_height, fw_version, timestamp
-    );
-
-    let response = DisplayCurrentResponse {
-        status: 200,
-        refresh_rate: 300,
-        image_url: Some(image_url),
-        filename: Some(format!("screen_{}.bmp", timestamp)),
-        rendered_at: Some(Utc::now()),
     };
 
     (StatusCode::OK, Json(response)).into_response()

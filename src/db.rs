@@ -131,10 +131,6 @@ pub async fn get_or_create_device(
     battery_voltage: Option<f32>,
     rssi: Option<&str>,
 ) -> Result<Device, sqlx::error::Error> {
-    if let Ok(Some(device)) = get_device_by_token(access_token).await {
-        return Ok(device);
-    }
-
     let device_id: SqliteRow = sqlx::query(
         "INSERT INTO devices (access_token, mac_address, model, friendly_id, battery_voltage, fw_version, rssi, width, height) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -160,6 +156,7 @@ pub async fn get_or_create_device(
     .fetch_one(get())
     .await?;
 
+    
     Device::from_row(&device_id)
 }
 
