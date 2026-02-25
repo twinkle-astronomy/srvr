@@ -51,6 +51,7 @@ services:
       - "80:8080"
     environment:
       - DATABASE_URL=sqlite:///data/data.db
+      - TZ="America/Los_Angeles"
 
 
 volumes:

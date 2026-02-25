@@ -291,9 +291,6 @@
   .h-96 {
     height: calc(var(--spacing) * 96);
   }
-  .h-auto {
-    height: auto;
-  }
   .w-2 {
     width: calc(var(--spacing) * 2);
   }
@@ -670,9 +667,6 @@
   }
   .text-green-600 {
     color: var(--color-green-600);
-  }
-  .text-red-300 {
-    color: var(--color-red-300);
   }
   .text-red-400 {
     color: var(--color-red-400);

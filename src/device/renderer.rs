@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use dioxus::prelude::*;
 use liquid::Object;
 use thiserror::Error;
@@ -29,15 +30,17 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
     for query in prometheus_queries {
         prometheus_data.insert(query.name.clone(), query.get_render_obj().await?);
     }
-    let now = Utc::now();
+    let tz: Tz = std::env::var("TZ").unwrap_or("UTC".to_string()).parse().unwrap();
+
+    let utc_now: DateTime<Utc> = Utc::now();
+    let time_in_tz: DateTime<Tz> = utc_now.with_timezone(&tz);
+    
     Ok(liquid::object!({
         "device": device.get_render_obj(),
-        // "width": device.width,
-        // "height": device.height,
-        "time": now.format("%H:%M:%S UTC").to_string(),
-        "date": now.format("%Y-%m-%d").to_string(),
+        "time": time_in_tz.format("%I:%M %P").to_string().strip_prefix("0"),
+        "timezone": time_in_tz.format("%Z").to_string(),
+        "date": time_in_tz.format("%Y-%m-%d").to_string(),
         "prometheus": liquid::object!(prometheus_data),
-        // "fw_version": device.fw_version,
     }))
 }
 

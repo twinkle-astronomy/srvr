@@ -34,6 +34,7 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
+      - TZ="America/Los_Angeles"
 
   prometheus:
     image: prom/prometheus:latest
