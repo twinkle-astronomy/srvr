@@ -9,9 +9,8 @@ services:
         GID: ${GID:-1000}
     init: true
     volumes:
-      - srvr-data:/data
-      - .:/app
       - bash-history:/home/dev/.bash_history_dir
+      - .:/app
     ports:
       - "8080:8080"
     environment:
