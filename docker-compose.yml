@@ -9,12 +9,15 @@ services:
         GID: ${GID:-1000}
     init: true
     volumes:
+      - srvr-data:/data
       - .:/app
       - bash-history:/home/dev/.bash_history_dir
     ports:
       - "8080:8080"
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
+      - DATABASE_URL=sqlite:///app/.data/data.db
+      - TZ="America/Los_Angeles"
     command:
       "sleep infinity"
   srvr-published:
