@@ -112,7 +112,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let response = DisplayResponse {
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 5 * 60,
+        refresh_rate: 1 * 60,
         update_firmware: false,
         maximum_compatibility: false,
     };
