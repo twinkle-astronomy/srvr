@@ -156,7 +156,6 @@ pub async fn get_or_create_device(
     .fetch_one(get())
     .await?;
 
-    
     Device::from_row(&device_id)
 }
 

@@ -3,9 +3,9 @@ use std::ops::DerefMut;
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
-    create_prometheus_query, delete_prometheus_query, execute_prometheus_queries, get_devices,
-    get_prometheus_queries_for_template, get_template, get_template_context, get_template_preview,
-    save_template, update_prometheus_query, TemplateVar,
+    TemplateVar, create_prometheus_query, delete_prometheus_query, execute_prometheus_queries,
+    get_devices, get_prometheus_queries_for_template, get_template, get_template_context,
+    get_template_preview, save_template, update_prometheus_query,
 };
 use crate::models::{Device, PrometheusQuery, PrometheusQueryResult, Template};
 use dioxus::logger::tracing::info;
@@ -34,7 +34,8 @@ pub fn TemplateEditor() -> Element {
                     match get_template_preview(device.id, template).await {
                         Ok(b64) => {
                             preview_error.set(None);
-                            preview_b64.set(b64)},
+                            preview_b64.set(b64)
+                        }
                         Err(e) => {
                             tracing::error!("Preview error: {e}");
                             preview_error.set(Some(format!("{:?}", e)));
@@ -50,7 +51,11 @@ pub fn TemplateEditor() -> Element {
     // Auto-preview on initial load and when device selection changes.
     // Must be registered before the ? operators so it runs on every render.
     use_effect(move || {
-        if preview_error().is_none() && selected_device().is_some() && !preview_loading() && preview_b64().is_none() {
+        if preview_error().is_none()
+            && selected_device().is_some()
+            && !preview_loading()
+            && preview_b64().is_none()
+        {
             info!("Loading preview");
             fetch_preview();
         }
@@ -314,8 +319,7 @@ fn TemplatePreview(
 
 #[component]
 fn PrometheusQueries(template_id: i64) -> Element {
-    let mut queries =
-        use_server_future(move || get_prometheus_queries_for_template(template_id))?;
+    let mut queries = use_server_future(move || get_prometheus_queries_for_template(template_id))?;
     let mut query_results = use_signal(|| None::<Vec<PrometheusQueryResult>>);
     let mut results_loading = use_signal(|| false);
     let mut show_add_form = use_signal(|| false);
@@ -395,7 +399,8 @@ fn AddQueryForm(template_id: i64, on_saved: EventHandler) -> Element {
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
-    let can_save = !name().trim().is_empty() && !addr().trim().is_empty() && !query().trim().is_empty();
+    let can_save =
+        !name().trim().is_empty() && !addr().trim().is_empty() && !query().trim().is_empty();
 
     rsx! {
         div { class: "p-4 border-b border-gray-100 bg-gray-50",
@@ -471,8 +476,9 @@ fn QueryRow(
     let mut error = use_signal(|| None::<String>);
     let query_id = query.id;
 
-    let can_save =
-        !edit_name().trim().is_empty() && !edit_addr().trim().is_empty() && !edit_query().trim().is_empty();
+    let can_save = !edit_name().trim().is_empty()
+        && !edit_addr().trim().is_empty()
+        && !edit_query().trim().is_empty();
 
     if editing() {
         return rsx! {

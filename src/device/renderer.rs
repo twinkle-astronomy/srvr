@@ -21,6 +21,8 @@ pub enum Error {
     DbError(#[from] sqlx::error::Error),
     #[error("{0}")]
     PrometheusError(#[from] prometheus_http_query::error::Error),
+    #[error("{0}")]
+    TzError(#[from] chrono_tz::ParseError),
 }
 
 pub async fn render_vars(device: &Device, template: &Template) -> Result<Object, Error> {
@@ -30,11 +32,12 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
     for query in prometheus_queries {
         prometheus_data.insert(query.name.clone(), query.get_render_obj().await?);
     }
-    let tz: Tz = std::env::var("TZ").unwrap_or("UTC".to_string()).parse().unwrap();
+
+    let tz: Tz = std::env::var("TZ").unwrap_or("UTC".to_string()).parse()?;
 
     let utc_now: DateTime<Utc> = Utc::now();
     let time_in_tz: DateTime<Tz> = utc_now.with_timezone(&tz);
-    
+
     Ok(liquid::object!({
         "device": device.get_render_obj(),
         "time": time_in_tz.format("%I:%M %P").to_string(),
@@ -46,7 +49,6 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
 pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u8>, Error> {
-    
     // Render SVG from template
     let svg_data = template.render(render_vars(device, template).await?)?;
 

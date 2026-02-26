@@ -288,7 +288,6 @@ pub async fn get_template_context(
     let device_obj = render_vars(&device, &template)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    // device_obj.
     let mut vars: Vec<TemplateVar> = vec![];
     obj_to_template_var(&"".to_string(), &mut vars, &device_obj);
 
