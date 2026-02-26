@@ -17,7 +17,7 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///app/.data/data.db
-      - TZ="America/Los_Angeles"
+      - TZ=America/Los_Angeles
     command:
       "sleep infinity"
   srvr-published:
@@ -37,7 +37,7 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
-      - TZ="America/Los_Angeles"
+      - TZ=America/Los_Angeles
 
   prometheus:
     image: prom/prometheus:latest
