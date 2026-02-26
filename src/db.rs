@@ -87,18 +87,6 @@ pub async fn get_device(device_id: i64) -> Result<Option<Device>, sqlx::error::E
         .await
 }
 
-pub async fn get_device_by_token(token: &str) -> Result<Option<Device>, sqlx::error::Error> {
-    sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
-         FROM devices
-         WHERE access_token = $1
-         ORDER BY last_seen_at DESC"
-    )
-        .bind(token)
-        .fetch_optional(get())
-        .await
-}
-
 pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
     sqlx::query_as(
         "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
