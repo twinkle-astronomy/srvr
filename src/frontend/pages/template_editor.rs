@@ -39,7 +39,6 @@ pub fn TemplateEditor() -> Element {
                         Err(e) => {
                             tracing::error!("Preview error: {e}");
                             preview_error.set(Some(format!("{:?}", e)));
-                            // preview_b64.set(None);
                         }
                     }
                     preview_loading.set(false);

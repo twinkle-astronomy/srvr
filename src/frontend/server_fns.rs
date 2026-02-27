@@ -173,6 +173,20 @@ pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
 }
 
 #[server]
+pub async fn get_device_by_id(id: i64) -> Result<Option<Device>, ServerFnError> {
+    crate::db::get_device(id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn delete_device(id: i64) -> Result<(), ServerFnError> {
+    crate::db::delete_device(id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
 pub async fn update_prometheus_query(
     id: i64,
     name: String,

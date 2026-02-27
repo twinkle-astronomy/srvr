@@ -4,7 +4,7 @@ pub mod server_fns;
 
 use dioxus::prelude::*;
 
-use pages::{ApiInfo, Dashboard, Devices, TemplateEditor};
+use pages::{ApiInfo, Dashboard, DeviceDetail, Devices, TemplateEditor};
 
 #[derive(Routable, Clone, PartialEq, Debug)]
 #[rustfmt::skip]
@@ -16,6 +16,8 @@ enum Route {
         ApiInfo {},
         #[route("/devices")]
         Devices {},
+        #[route("/devices/:id")]
+        DeviceDetail { id: i64 },
         #[route("/template")]
         TemplateEditor {},
     #[end_layout]

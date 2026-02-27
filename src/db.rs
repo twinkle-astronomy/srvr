@@ -75,6 +75,14 @@ pub async fn get_template() -> Result<Template, sqlx::error::Error> {
     }
 }
 
+pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM devices WHERE id = ?")
+        .bind(device_id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
 pub async fn get_device(device_id: i64) -> Result<Option<Device>, sqlx::error::Error> {
     sqlx::query_as(
         "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
