@@ -6,7 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::models::{Device, PrometheusQuery, Template};
+use crate::models::{Device, DeviceLog, DeviceLogEntry, PrometheusQuery, Template};
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -21,7 +21,8 @@ pub async fn init() -> &'static SqlitePool {
                 .parse::<SqliteConnectOptions>()
                 .expect("Invalid DATABASE_URL")
                 .create_if_missing(true)
-                .journal_mode(SqliteJournalMode::Wal),
+                .journal_mode(SqliteJournalMode::Wal)
+                .pragma("foreign_keys", "ON"),
         )
         .await
         .expect("Failed to connect to SQLite");
@@ -73,6 +74,70 @@ pub async fn get_template() -> Result<Template, sqlx::error::Error> {
             Err(e)
         }
     }
+}
+
+pub async fn get_device_logs(
+    device_id: i64,
+    limit: i64,
+) -> Result<Vec<DeviceLog>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, device_id, device_log_id, battery_voltage, created_at, firmware_version, \
+         free_heap_size, max_alloc_size, message, refresh_rate, sleep_duration, source_line, \
+         source_path, special_function, wake_reason, wifi_signal, wifi_status, logged_at \
+         FROM device_logs \
+         WHERE device_id = ? \
+         ORDER BY logged_at DESC \
+         LIMIT ?",
+    )
+    .bind(device_id)
+    .bind(limit)
+    .fetch_all(get())
+    .await
+}
+
+pub async fn get_device_id_by_access_token(
+    access_token: &str,
+) -> Result<Option<i64>, sqlx::error::Error> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM devices WHERE access_token = ?")
+        .bind(access_token)
+        .fetch_optional(get())
+        .await?;
+    Ok(row.map(|(id,)| id))
+}
+
+pub async fn insert_device_logs(
+    device_id: i64,
+    logs: &[DeviceLogEntry],
+) -> Result<(), sqlx::error::Error> {
+    let conn = get();
+    for log in logs {
+        sqlx::query(
+            "INSERT INTO device_logs \
+             (device_id, device_log_id, battery_voltage, created_at, firmware_version, \
+              free_heap_size, max_alloc_size, message, refresh_rate, sleep_duration, \
+              source_line, source_path, special_function, wake_reason, wifi_signal, wifi_status) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(log.id)
+        .bind(log.battery_voltage)
+        .bind(log.created_at)
+        .bind(&log.firmware_version)
+        .bind(log.free_heap_size)
+        .bind(log.max_alloc_size)
+        .bind(&log.message)
+        .bind(log.refresh_rate)
+        .bind(log.sleep_duration)
+        .bind(log.source_line)
+        .bind(&log.source_path)
+        .bind(&log.special_function)
+        .bind(&log.wake_reason)
+        .bind(log.wifi_signal)
+        .bind(&log.wifi_status)
+        .execute(conn)
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {

@@ -60,6 +60,48 @@ pub struct PrometheusMetricResult {
     pub value: f64,
 }
 
+#[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DeviceLog {
+    pub id: i64,
+    pub device_id: i64,
+    pub device_log_id: Option<i64>,
+    pub battery_voltage: Option<f64>,
+    pub created_at: Option<i64>,
+    pub firmware_version: Option<String>,
+    pub free_heap_size: Option<i64>,
+    pub max_alloc_size: Option<i64>,
+    pub message: Option<String>,
+    pub refresh_rate: Option<i64>,
+    pub sleep_duration: Option<i64>,
+    pub source_line: Option<i64>,
+    pub source_path: Option<String>,
+    pub special_function: Option<String>,
+    pub wake_reason: Option<String>,
+    pub wifi_signal: Option<i64>,
+    pub wifi_status: Option<String>,
+    pub logged_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceLogEntry {
+    pub id: Option<i64>,
+    pub battery_voltage: Option<f64>,
+    pub created_at: Option<i64>,
+    pub firmware_version: Option<String>,
+    pub free_heap_size: Option<i64>,
+    pub max_alloc_size: Option<i64>,
+    pub message: Option<String>,
+    pub refresh_rate: Option<i64>,
+    pub sleep_duration: Option<i64>,
+    pub source_line: Option<i64>,
+    pub source_path: Option<String>,
+    pub special_function: Option<String>,
+    pub wake_reason: Option<String>,
+    pub wifi_signal: Option<i64>,
+    pub wifi_status: Option<String>,
+}
+
 impl Device {
     pub fn percent_charged(&self) -> Option<f32> {
         self.battery_voltage.map(|battery_voltage| {

@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
-    db::{get_device, get_template},
+    db::{get_device, get_device_id_by_access_token, get_template, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
+    models::DeviceLogEntry,
 };
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
@@ -36,7 +37,7 @@ struct DisplayResponse {
 
 #[derive(Deserialize)]
 struct LogRequest {
-    logs: Vec<serde_json::Value>,
+    logs: Vec<DeviceLogEntry>,
 }
 
 #[derive(Serialize)]
@@ -138,10 +139,21 @@ async fn log_handler(headers: HeaderMap, Json(payload): Json<LogRequest>) -> imp
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    info!("Received logs: {:?}", payload.logs);
+    info!("Received {} log(s) from device", payload.logs.len());
 
-    // Upsert last_seen in database (fire-and-forget)
-    let db = crate::db::get().clone();
+    let device_id = match get_device_id_by_access_token(access_token).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(e) => {
+            error!("Error looking up device: {:?}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if let Err(e) = insert_device_logs(device_id, &payload.logs).await {
+        error!("Error inserting device logs: {:?}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
 
     StatusCode::NO_CONTENT.into_response()
 }

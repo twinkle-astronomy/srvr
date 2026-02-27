@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Device, PrometheusQuery, PrometheusQueryResult, Template};
+use crate::models::{Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, Template};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ServerInfo {
@@ -175,6 +175,13 @@ pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
 #[server]
 pub async fn get_device_by_id(id: i64) -> Result<Option<Device>, ServerFnError> {
     crate::db::get_device(id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn get_device_logs(id: i64) -> Result<Vec<DeviceLog>, ServerFnError> {
+    crate::db::get_device_logs(id, 100)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
