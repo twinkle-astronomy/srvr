@@ -12,7 +12,7 @@ use tracing::{error, info};
 
 use crate::{
     db::{get_device, get_template},
-    device::{device_from_headers, renderer},
+    device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
 };
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
@@ -72,7 +72,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         }
     }
 
-    let device = match device_from_headers(&headers).await {
+    let device = match get_and_update_device_from_headers(&headers).await {
         Ok(d) => d,
         Err(crate::device::Error::MissingAccessToken) => {
             error!("Missing access token");
@@ -80,6 +80,16 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
                     "error": "Missing Access-Token header"
+                })),
+            )
+                .into_response();
+        }
+        Err(crate::device::Error::SqlxError(e)) => {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": 500,
+                    "error": format!("{:?}", e)
                 })),
             )
                 .into_response();
@@ -132,138 +142,51 @@ async fn log_handler(headers: HeaderMap, Json(payload): Json<LogRequest>) -> imp
 
     // Upsert last_seen in database (fire-and-forget)
     let db = crate::db::get().clone();
-    let token = access_token.to_string();
-
-    let _ = sqlx::query(
-        "INSERT INTO devices (access_token, mac_address, model, friendly_id) \
-            VALUES (?, 'unknown', 'unknown', 'unknown') \
-            ON CONFLICT(access_token) DO UPDATE SET \
-            last_seen_at = datetime('now'), \
-            updated_at = datetime('now')",
-    )
-    .bind(&token)
-    .execute(&db)
-    .await;
 
     StatusCode::NO_CONTENT.into_response()
 }
 
 // GET /api/setup - Set up device
 async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
-    // Extract required headers
-    let device_id = match headers.get("ID") {
-        Some(id) => id.to_str().unwrap_or(""),
-        None => {
+    let access_token = generate_access_token();
+
+    info!("=== GET /api/setup - Request Headers ===");
+    for (key, value) in headers.iter() {
+        if let Ok(val_str) = value.to_str() {
+            info!("  {}: {}", key, val_str);
+        } else {
+            info!("  {}: <non-UTF8 value>", key);
+        }
+    }
+
+    let device = match create_device_from_headers(&access_token, &headers).await {
+        Ok(d) => d,
+        Err(crate::device::Error::MissingAccessToken) => {
+            error!("Missing access token");
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
-                    "error": "Missing ID header (Device MAC Address)"
+                    "error": "Missing Access-Token header"
                 })),
             )
                 .into_response();
-        }
-    };
-
-    let device_model = match headers.get("Model") {
-        Some(model) => model.to_str().unwrap_or(""),
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "Missing Model header"
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    info!("Setup request - ID: {}, Model: {}", device_id, device_model);
-
-    // Get device dimensions and firmware version if available
-    let device_width: Option<i64> = headers
-        .get("Width")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse().ok());
-    let device_height: Option<i64> = headers
-        .get("Height")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse().ok());
-    let fw_version = headers.get("FW-Version").and_then(|h| h.to_str().ok());
-
-    let db = crate::db::get();
-
-    // Check if device already exists by MAC address
-    let existing = sqlx::query_as::<_, (String, String)>(
-        "SELECT access_token, friendly_id FROM devices WHERE mac_address = ?",
-    )
-    .bind(device_id)
-    .fetch_optional(db)
-    .await;
-
-    let (api_key, friendly_id) = match existing {
-        Ok(Some((token, fid))) => {
-            // Device exists — update its info and return existing token
-            let _ = sqlx::query(
-                "UPDATE devices SET model = ?, width = COALESCE(?, width), height = COALESCE(?, height), \
-                 fw_version = COALESCE(?, fw_version), \
-                 last_seen_at = datetime('now'), updated_at = datetime('now') \
-                 WHERE mac_address = ?"
-            )
-                .bind(device_model)
-                .bind(device_width)
-                .bind(device_height)
-                .bind(fw_version)
-                .bind(device_id)
-                .execute(db)
-                .await;
-
-            info!("Existing device re-registered: {}", device_id);
-            (token, fid)
-        }
-        Ok(None) => {
-            // New device — generate token and insert
-            let token = generate_access_token();
-            let fid = format!("device-{}", &device_id[..device_id.len().min(6)]);
-
-            let result = sqlx::query(
-                "INSERT INTO devices (mac_address, model, access_token, friendly_id, \
-                 width, height, fw_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(device_id)
-            .bind(device_model)
-            .bind(&token)
-            .bind(&fid)
-            .bind(device_width)
-            .bind(device_height)
-            .bind(fw_version)
-            .execute(db)
-            .await;
-
-            if let Err(e) = result {
-                tracing::error!("Failed to insert device: {}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": "Failed to register device"
-                    })),
-                )
-                    .into_response();
-            }
-
-            info!("New device registered: {} -> {}", device_id, fid);
-            (token, fid)
         }
         Err(e) => {
-            tracing::error!("Database error during setup: {}", e);
+            error!("Error: {:?}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
-                    "error": "Database error"
+                    "error": format!("{:?}", e)
                 })),
             )
                 .into_response();
         }
     };
+
+    info!(
+        "Setup request - MAC: {}, Model: {}, FriendlyID: {}",
+        device.mac_address, device.model, device.friendly_id
+    );
 
     // Get the host from the request headers to build the correct image URL
     let host = headers
@@ -271,23 +194,17 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost:8080");
 
+    // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
-    let width_param = device_width
-        .map(|w| w.to_string())
-        .unwrap_or_else(|| "800".to_string());
-    let height_param = device_height
-        .map(|h| h.to_string())
-        .unwrap_or_else(|| "480".to_string());
-    let fw_param = fw_version.unwrap_or("unknown");
     let image_url = format!(
-        "http://{}/render/screen.bmp?width={}&height={}&fw={}&t={}",
-        host, width_param, height_param, fw_param, timestamp
+        "http://{}/render/screen.bmp?device_id={}&t={}",
+        host, device.id, timestamp
     );
 
     let response = SetupResponse {
         status: 200,
-        api_key: Some(api_key),
-        friendly_id: Some(friendly_id),
+        api_key: Some(device.access_token),
+        friendly_id: Some(device.friendly_id),
         image_url: Some(image_url),
         message: "Device setup successful".to_string(),
     };

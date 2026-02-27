@@ -1,14 +1,13 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{delete_device, get_device_by_id, get_devices, get_screen_preview};
+use crate::frontend::server_fns::{
+    delete_device, get_device_by_id, get_devices, get_screen_preview,
+};
 use crate::models::Device;
 
 #[component]
 pub fn Devices() -> Element {
-
-    let mut devices = use_server_future(move || {
-        get_devices()
-    })?;
+    let mut devices = use_server_future(move || get_devices())?;
 
     rsx! {
         div { class: "mb-8 flex items-center justify-between",

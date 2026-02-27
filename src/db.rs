@@ -116,7 +116,37 @@ pub async fn update_template(id: i64, content: &str) -> Result<(), sqlx::error::
     Ok(())
 }
 
-pub async fn get_or_create_device(
+pub async fn get_and_update_device_by_access_token(
+    access_token: &str,
+    mac_address: Option<&str>,
+    model: Option<&str>,
+    fw_version: Option<&str>,
+    width: Option<i64>,
+    height: Option<i64>,
+    battery_voltage: Option<f32>,
+    rssi: Option<&str>,
+) -> Result<Device, sqlx::error::Error> {
+    let device_row: SqliteRow = sqlx::query(
+        "UPDATE devices \
+        SET mac_address = ?, model = ?, battery_voltage = ?, fw_version = ?, rssi = ?, width = ?, height = ? \
+        WHERE access_token = ?
+        RETURNING *",
+    )
+    .bind(mac_address)
+    .bind(model)
+    .bind(battery_voltage)
+    .bind(fw_version)
+    .bind(rssi)
+    .bind(width)
+    .bind(height)
+    .bind(access_token)
+    .fetch_one(get())
+    .await?;
+
+    Device::from_row(&device_row)
+}
+
+pub async fn create_device(
     access_token: &str,
     mac_address: Option<&str>,
     model: Option<&str>,
@@ -130,14 +160,6 @@ pub async fn get_or_create_device(
     let device_id: SqliteRow = sqlx::query(
         "INSERT INTO devices (access_token, mac_address, model, friendly_id, battery_voltage, fw_version, rssi, width, height) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-        ON CONFLICT(access_token) DO UPDATE SET \
-        battery_voltage = COALESCE(excluded.battery_voltage, battery_voltage), \
-        fw_version = COALESCE(excluded.fw_version, fw_version), \
-        rssi = COALESCE(excluded.rssi, rssi), \
-        width = COALESCE(excluded.width, width), \
-        height = COALESCE(excluded.height, height), \
-        last_seen_at = datetime('now'), \
-        updated_at = datetime('now') \
         RETURNING *",
     )
     .bind(access_token)
