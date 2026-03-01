@@ -43,13 +43,14 @@ Use this docker-compose.yml to spin up a simple instance.
 ```yml
 services:
   srvr:
-    image: ghcr.io/twinkle-astronomy/srvr:0.0.13
+    image: ghcr.io/twinkle-astronomy/srvr:0.0.14
     volumes:
       - srvr-data:/data
     init: true
     ports:
       - "80:8080"
     environment:
+      - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
       - TZ=America/Los_Angeles
 
