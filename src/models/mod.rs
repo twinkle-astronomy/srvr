@@ -1,3 +1,5 @@
+
+use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use sqlx::FromRow;
 
@@ -22,7 +24,7 @@ pub struct PrometheusQuery {
 }
 
 #[cfg_attr(feature = "server", derive(FromRow))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Store)]
 pub struct Template {
     pub id: i64,
     pub content: String,
@@ -31,7 +33,7 @@ pub struct Template {
 }
 
 #[cfg_attr(feature = "server", derive(FromRow))]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Store)]
 pub struct Device {
     pub id: i64,
     pub access_token: String,

@@ -97,7 +97,7 @@ mod utils {
 }
 
 #[server]
-pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, ServerFnError> {
+pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError> {
     use crate::db::{get_device, get_template};
     use base64::Engine;
 
@@ -115,11 +115,11 @@ pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, Server
     match crate::device::renderer::render_screen(&device, &template).await {
         Ok(bmp_bytes) => {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
-            Ok(Some(encoded))
+            Ok(encoded)
         }
         Err(e) => {
             tracing::info!("Failed to render screen: {}", e);
-            Ok(None)
+            Err(ServerFnError::new(format!("{:?}", e)))
         }
     }
 }
@@ -128,7 +128,7 @@ pub async fn get_screen_preview(device_id: i64) -> Result<Option<String>, Server
 pub async fn get_template_preview(
     device_id: i64,
     template: Template,
-) -> Result<Option<String>, ServerFnError> {
+) -> Result<String, ServerFnError> {
     use crate::db::get_device;
     use base64::Engine;
 
@@ -144,7 +144,7 @@ pub async fn get_template_preview(
         .map_err(|e| ServerFnError::new(format!("Unable to render screen: {}", e)))?;
 
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
-    Ok(Some(encoded))
+    Ok(encoded)
 }
 
 #[server]

@@ -180,16 +180,11 @@ pub fn DeviceDetail(id: i64) -> Element {
                     div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6",
                         h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Screen Preview" }
                         match screen() {
-                            Some(Ok(Some(b64))) => rsx! {
+                            Some(Ok(b64)) => rsx! {
                                 img {
                                     class: "w-full rounded border border-gray-100",
                                     src: "data:image/bmp;base64,{b64}",
                                     alt: "Screen preview",
-                                }
-                            },
-                            Some(Ok(None)) => rsx! {
-                                div { class: "flex items-center justify-center h-32 bg-gray-50 rounded-lg",
-                                    p { class: "text-sm text-gray-400", "Preview unavailable" }
                                 }
                             },
                             Some(Err(e)) => rsx! {

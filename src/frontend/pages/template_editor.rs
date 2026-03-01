@@ -1,256 +1,181 @@
-use std::ops::DerefMut;
-
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
-    TemplateVar, create_prometheus_query, delete_prometheus_query, execute_prometheus_queries,
-    get_devices, get_prometheus_queries_for_template, get_template, get_template_context,
-    get_template_preview, save_template, update_prometheus_query,
+    create_prometheus_query, delete_prometheus_query, execute_prometheus_queries, get_devices,
+    get_prometheus_queries_for_template, get_template, get_template_context, get_template_preview,
+    save_template, update_prometheus_query,
 };
 use crate::models::{Device, PrometheusQuery, PrometheusQueryResult, Template};
-use dioxus::logger::tracing::info;
 
 #[component]
 pub fn TemplateEditor() -> Element {
-    let mut template = use_signal(|| None::<Template>);
-    let mut preview_b64 = use_signal(|| None::<String>);
+    let mut devices = use_store(|| vec![]);
+    let mut selected_device = use_store(|| None::<Device>);
+    let mut template = use_store(|| None::<Template>);
+    let mut image = use_store(|| None::<String>);
+    let mut render_error = use_store(|| None::<String>);
     let mut preview_loading = use_signal(|| false);
-    let mut save_status = use_signal(|| None::<Result<(), String>>);
-    let mut selected_device = use_signal(|| None::<Device>);
-    let mut preview_error = use_signal(|| None::<String>);
+    let mut preview_pending = use_signal(|| true);
+    let mut preview_skipped = use_signal(||false);
 
-    // Uses peek() so it only re-runs when selected_device changes, not on every keystroke
-    let mut fetch_preview = move || {
-        if let Some(device) = selected_device.peek().clone() {
-            if let Some(tmpl) = template() {
-                let template = Template {
-                    id: tmpl.id,
-                    content: tmpl.content.clone(),
-                    created_at: tmpl.created_at.clone(),
-                    updated_at: tmpl.updated_at.clone(),
-                };
-                preview_loading.set(true);
-                spawn(async move {
-                    match get_template_preview(device.id, template).await {
-                        Ok(b64) => {
-                            preview_error.set(None);
-                            preview_b64.set(b64)
-                        }
-                        Err(e) => {
-                            tracing::error!("Preview error: {e}");
-                            preview_error.set(Some(format!("{:?}", e)));
-                        }
-                    }
-                    preview_loading.set(false);
-                });
+    use_effect(move || match selected_device() {
+        None if devices().len() > 0 => selected_device.set(devices().first().cloned()),
+        _ => {}
+    });
+
+    use_resource(move || async move {
+        match get_devices().await {
+            Ok(v) => {
+                devices.set(v);
             }
-        }
-    };
-
-    // Auto-preview on initial load and when device selection changes.
-    // Must be registered before the ? operators so it runs on every render.
-    use_effect(move || {
-        if preview_error().is_none()
-            && selected_device().is_some()
-            && !preview_loading()
-            && preview_b64().is_none()
-        {
-            info!("Loading preview");
-            fetch_preview();
+            Err(_) => {}
         }
     });
 
-    let devices = use_server_future(get_devices)?;
-    let srv_template = use_server_future(get_template)?;
-
-    if template().is_none() {
-        if let Some(Ok(ref tmpl)) = srv_template() {
-            template.set(Some(tmpl.clone()));
-        }
-    }
-
-    if selected_device().is_none() {
-        if let Some(Ok(ref devs)) = devices() {
-            if let Some(first) = devs.first() {
-                selected_device.set(Some(first.clone()));
+    use_resource(move || async move {
+        match get_template().await {
+            Ok(v) => {
+                template.set(Some(v));
             }
+            Err(_) => {}
         }
-    }
+    });
+
+    use_effect(move || {
+        if let (Some(device), Some(template)) = (selected_device(), template()) {
+            if !(preview_pending() || preview_skipped()) {
+                return;
+            }
+
+            if *preview_loading.peek() {
+                preview_skipped.set(true);
+                return;
+            }
+            if preview_skipped() {
+                preview_skipped.set(false);
+            }
+            spawn(async move {
+                preview_loading.set(true);
+                match get_template_preview(device.id, template).await {
+                    Ok(i) => {
+                        render_error.set(None);
+
+                        image.set(Some(i))
+                    }
+                    Err(e) => {
+                        render_error.set(Some(format!("{:?}", e)));
+                    }
+                }
+                preview_pending.set(false);
+                preview_loading.set(false);
+            });
+        }
+    });
 
     rsx! {
         div { class: "mb-8",
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Template Editor" }
             p { class: "text-gray-500 mt-1", "Edit the SVG Liquid template used for device screens" }
         }
-
         div { class: "flex flex-wrap items-start gap-6",
             TemplateForm {
                 template,
                 devices,
                 selected_device,
-                save_status,
-                preview_error,
-                on_preview: move |_| fetch_preview(),
-                on_save: move |_| {
-                    if let Some(tmpl) = template() {
-                        save_status.set(None);
-                        fetch_preview();
-                        spawn(async move {
-                            match save_template(tmpl.id, tmpl.content).await {
-                                Ok(()) => save_status.set(Some(Ok(()))),
-                                Err(e) => save_status.set(Some(Err(e.to_string()))),
-                            }
-                        });
-                    }
-                },
+                preview_error: render_error,
+                preview_pending
             }
             TemplatePreview {
                 selected_device,
                 preview_loading,
-                preview_b64,
+                preview_b64: image,
             }
         }
 
-        if let Some(ref tmpl) = template() {
-            PrometheusQueries { template_id: tmpl.id }
+        if let Some(template) = template() {
+            PrometheusQueries { template_id: template.id }
         }
+
     }
 }
 
 #[component]
 fn TemplateForm(
-    mut template: Signal<Option<Template>>,
-    devices: Resource<Result<Vec<Device>, ServerFnError>>,
-    mut selected_device: Signal<Option<Device>>,
-    save_status: Signal<Option<Result<(), String>>>,
-    preview_error: Signal<Option<String>>,
-    on_preview: EventHandler,
-    on_save: EventHandler,
+    mut template: WriteStore<Option<Template>>,
+    devices: ReadStore<Vec<Device>>,
+    mut selected_device: WriteStore<Option<Device>>,
+    // save_status: Signal<Option<Result<(), String>>>,
+    preview_error: ReadStore<Option<String>>,
+    preview_pending: Signal<bool>,
+    // on_preview: EventHandler,
+    // on_save: EventHandler,
 ) -> Element {
-    let mut vars_open = use_signal(|| false);
-    let mut ctx_vars: Signal<Vec<TemplateVar>> = use_signal(Vec::new);
-    let mut ctx_loading = use_signal(|| false);
+    let mut save_status = use_signal(|| None::<Result<(), String>>);
 
-    let mut fetch_ctx = move || {
-        let device_id = selected_device.peek().as_ref().map(|d| d.id);
-        let template_id = template.peek().as_ref().map(|t| t.id);
-        if let (Some(did), Some(tid)) = (device_id, template_id) {
-            ctx_vars.set(vec![]);
-            ctx_loading.set(true);
-            spawn(async move {
-                match get_template_context(did, tid).await {
-                    Ok(vars) => ctx_vars.set(vars),
-                    Err(e) => tracing::error!("Failed to get template context: {e}"),
-                }
-                ctx_loading.set(false);
-            });
-        }
-    };
-
-    use_effect(move || {
-        let _ = selected_device();
-        if vars_open() {
-            fetch_ctx();
-        }
-    });
-
-    let vars = ctx_vars();
+    let selected_id = use_memo(move || selected_device.read().as_ref().map(|d| d.id));
+    let template_id = use_memo(move || template.read().as_ref().map(|d| d.id));
 
     rsx! {
         div { class: "flex-1 min-w-0 flex flex-col gap-4",
             div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
                 div { class: "p-4 border-b border-gray-100 flex items-center justify-between",
                     span { class: "text-sm font-medium text-gray-700", "Template" }
-                    match devices() {
-                        Some(Ok(ref devs)) if !devs.is_empty() => rsx! {
-                            select {
-                                class: "text-sm border border-gray-200 rounded-lg px-2 py-1 text-gray-600",
-                                onchange: move |evt| {
-                                    if let Some(Ok(ref devs)) = devices() {
+                        if !devices().is_empty() {
+                                select {
+                                    class: "text-sm border border-gray-200 rounded-lg px-2 py-1 text-gray-600",
+                                    onchange: move |evt| {
                                         if let Ok(idx) = evt.value().parse::<usize>() {
-                                            if let Some(d) = devs.get(idx) {
+                                            if let Some(d) = devices().get(idx) {
                                                 selected_device.set(Some(d.clone()));
+                                                preview_pending.set(true)
                                             }
                                         }
+                                    },
+                                    for (i, dev) in devices().iter().enumerate() {
+                                        option { value: "{i}", "{dev.friendly_id} ({dev.width}\u{00d7}{dev.height})" }
                                     }
-                                },
-                                for (i, dev) in devs.iter().enumerate() {
-                                    option { value: "{i}", "{dev.friendly_id} ({dev.width}\u{00d7}{dev.height})" }
                                 }
-                            }
-                        },
-                        _ => rsx! {
+
+                        } else {
                             span { class: "text-xs text-gray-400", "No devices" }
-                        },
-                    }
+                        }
+
                 }
-                if let Some(tmpl) = template() {
+
                 textarea {
                     class: "w-full h-96 p-4 font-mono text-sm text-gray-800 bg-gray-50 border-0 focus:outline-none focus:ring-0 resize-y",
                     spellcheck: false,
-                    value: "{tmpl.content}",
+                    value: template().map(|x| x.content).unwrap_or_else(|| "".to_string()),
                     oninput: move |evt| {
                         save_status.set(None);
-                        let mut writable = template.write();
-                        if let Some(t) = writable.deref_mut() {
-                            t.content = evt.value();
-                        }
-                    },
-                }
-                }
-            }
 
-            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                button {
-                    class: "w-full px-4 py-2.5 flex items-center justify-between text-left hover:bg-gray-50 transition-colors",
-                    onclick: move |_| vars_open.set(!vars_open()),
-                    span { class: "text-xs font-medium text-gray-600", "Available Template Variables" }
-                    span { class: "text-xs text-gray-400", if vars_open() { "▲" } else { "▼" } }
-                }
-                if vars_open() {
-                    div { class: "border-t border-gray-100 p-4",
-                        if ctx_loading() {
-                            p { class: "text-xs text-gray-400 mb-3 italic", "Fetching values..." }
-                        }
-                        if !vars.is_empty() {
-                            table { class: "w-full text-xs",
-                                thead {
-                                    tr { class: "text-left text-gray-400 border-b border-gray-100",
-                                        th { class: "pb-1.5 font-medium pr-4", "Variable" }
-                                        th { class: "pb-1.5 font-medium", "Value" }
-                                    }
-                                }
-                                tbody { class: "divide-y divide-gray-50",
-                                    for var in vars.iter() {
-                                        tr {
-                                            td { class: "py-1.5 pr-4",
-                                                code { class: "text-blue-700 bg-blue-50 px-1 rounded",
-                                                    {format!("{{{{ {} }}}}", var.path)}
-                                                }
-                                            }
-                                            td {
-                                                class: if var.is_error { "py-1.5 font-mono text-red-500" } else { "py-1.5 font-mono text-gray-700" },
-                                                "{var.value}"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        if let Some(template) = template.write().as_mut() {
+                            info!("Updating template");
+
+                            preview_pending.set(true);
+                            template.content = evt.value();
                         }
                     }
                 }
+
             }
 
             div { class: "flex items-center gap-3",
                 button {
-                    class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                    disabled: selected_device().is_none(),
-                    onclick: move |_| on_preview.call(()),
-                    "Preview"
-                }
-                button {
                     class: "inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors",
-                    onclick: move |_| on_save.call(()),
+                    onclick: move |_| {
+                        save_status.set(None);
+                        spawn(async move {
+                            if let Some(template) = template() {
+                                match save_template(template.id, template.content).await {
+                                    Ok(()) => save_status.set(Some(Ok(()))),
+                                    Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                }
+                            }
+                        });
+                    },
+
+
                     "Save"
                 }
                 match save_status() {
@@ -269,32 +194,102 @@ fn TemplateForm(
                     None => rsx! {},
                 }
             }
+            TemplateVariables {device_id: selected_id, template_id }
+        }
+    }
+}
+
+#[component]
+fn TemplateVariables(device_id: Memo<Option<i64>>, template_id: Memo<Option<i64>>) -> Element {
+    let mut vars_loading = use_signal(|| true);
+    let mut vars = use_signal(|| vec![]);
+
+    use_resource(move || {
+        vars_loading.set(true);
+        async move {
+            if let (Some(device_id), Some(template_id)) = (device_id(), template_id()) {
+                let tv = get_template_context(device_id, template_id).await;
+                vars_loading.set(false);
+                match tv {
+                    Ok(v) => {
+                        vars.set(v);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+    });
+
+    let mut vars_open = use_signal(|| false);
+    rsx! {
+        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+            button {
+                class: "w-full px-4 py-2.5 flex items-center justify-between text-left hover:bg-gray-50 transition-colors",
+                onclick: move |_| vars_open.set(!vars_open()),
+                div { class: "flex items-center gap-2",
+                    span { class: "text-xs font-medium text-gray-600", "Available Template Variables" }
+                    if vars_loading() {
+                        div { class: "w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
+                    }
+                }
+                span { class: "text-xs text-gray-400", if vars_open() { "▲" } else { "▼" } }
+
+            }
+            if vars_open() {
+                div { class: "border-t border-gray-100 p-4",
+
+                    table { class: "w-full text-xs",
+                        thead {
+                            tr { class: "text-left text-gray-400 border-b border-gray-100",
+                                th { class: "pb-1.5 font-medium pr-4", "Variable" }
+                                th { class: "pb-1.5 font-medium", "Value" }
+                            }
+                        }
+                        tbody { class: "divide-y divide-gray-50",
+                            for var in vars.iter() {
+                                tr {
+                                    td { class: "py-1.5 pr-4",
+                                        code { class: "text-blue-700 bg-blue-50 px-1 rounded",
+                                            {format!("{{{{ {} }}}}", var.path)}
+                                        }
+                                    }
+                                    td {
+                                        class: if var.is_error { "py-1.5 font-mono text-red-500" } else { "py-1.5 font-mono text-gray-700" },
+                                        "{var.value}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 #[component]
 fn TemplatePreview(
-    selected_device: Signal<Option<Device>>,
+    selected_device: WriteStore<Option<Device>>,
     preview_loading: Signal<bool>,
-    preview_b64: Signal<Option<String>>,
+    preview_b64: ReadStore<Option<String>>,
 ) -> Element {
-    rsx! {
-        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-            div { class: "p-4 border-b border-gray-100",
-                span { class: "text-sm font-medium text-gray-700", "Preview" }
-            }
-            div { class: "p-4 bg-gray-50",
-                if let Some(ref dev) = selected_device() {
-                    div {
-                        class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
-                        style: "width: {dev.width}px; height: {dev.height}px;",
-                        if preview_loading() {
-                            div { class: "flex flex-col items-center justify-center gap-2",
-                                div { class: "w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
-                                p { class: "text-xs text-gray-300", "Rendering..." }
+    match selected_device() {
+        Some(device) => {
+            rsx! {
+                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                    div { class: "p-4 border-b border-gray-100",
+                        div { class: "flex items-center gap-2",
+                            span { class: "text-sm font-medium text-gray-700", "Preview" }
+                            if preview_loading() {
+                                div { class: "w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
                             }
-                        } else {
+                        }
+                    }
+                    div { class: "p-4 bg-gray-50",
+                        div {
+                            class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
+                            style: "width: {device.width}px; height: {device.height}px;",
+
                             match preview_b64() {
                                 Some(b64) => rsx! {
                                     img {
@@ -312,6 +307,9 @@ fn TemplatePreview(
                     }
                 }
             }
+        }
+        None => {
+            rsx! { "Loading" }
         }
     }
 }
