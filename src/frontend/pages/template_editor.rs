@@ -12,11 +12,7 @@ pub fn TemplateEditor() -> Element {
     let mut devices = use_store(|| vec![]);
     let mut selected_device = use_store(|| None::<Device>);
     let mut template = use_store(|| None::<Template>);
-    let mut image = use_store(|| None::<String>);
-    let mut render_error = use_store(|| None::<String>);
-    let mut preview_loading = use_signal(|| false);
-    let mut preview_pending = use_signal(|| true);
-    let mut preview_skipped = use_signal(||false);
+    let render_error = use_store(|| None::<String>);
 
     use_effect(move || match selected_device() {
         None if devices().len() > 0 => selected_device.set(devices().first().cloned()),
@@ -41,37 +37,6 @@ pub fn TemplateEditor() -> Element {
         }
     });
 
-    use_effect(move || {
-        if let (Some(device), Some(template)) = (selected_device(), template()) {
-            if !(preview_pending() || preview_skipped()) {
-                return;
-            }
-
-            if *preview_loading.peek() {
-                preview_skipped.set(true);
-                return;
-            }
-            if preview_skipped() {
-                preview_skipped.set(false);
-            }
-            spawn(async move {
-                preview_loading.set(true);
-                match get_template_preview(device.id, template).await {
-                    Ok(i) => {
-                        render_error.set(None);
-
-                        image.set(Some(i))
-                    }
-                    Err(e) => {
-                        render_error.set(Some(format!("{:?}", e)));
-                    }
-                }
-                preview_pending.set(false);
-                preview_loading.set(false);
-            });
-        }
-    });
-
     rsx! {
         div { class: "mb-8",
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Template Editor" }
@@ -83,12 +48,14 @@ pub fn TemplateEditor() -> Element {
                 devices,
                 selected_device,
                 preview_error: render_error,
-                preview_pending
             }
-            TemplatePreview {
-                selected_device,
-                preview_loading,
-                preview_b64: image,
+            if let (Some(selected_device), Some(template)) = (selected_device.transpose(), template.transpose()) {
+                TemplatePreview {
+                    device: selected_device,
+                    template,
+                    render_error
+                }
+
             }
         }
 
@@ -104,11 +71,7 @@ fn TemplateForm(
     mut template: WriteStore<Option<Template>>,
     devices: ReadStore<Vec<Device>>,
     mut selected_device: WriteStore<Option<Device>>,
-    // save_status: Signal<Option<Result<(), String>>>,
     preview_error: ReadStore<Option<String>>,
-    preview_pending: Signal<bool>,
-    // on_preview: EventHandler,
-    // on_save: EventHandler,
 ) -> Element {
     let mut save_status = use_signal(|| None::<Result<(), String>>);
 
@@ -127,7 +90,6 @@ fn TemplateForm(
                                         if let Ok(idx) = evt.value().parse::<usize>() {
                                             if let Some(d) = devices().get(idx) {
                                                 selected_device.set(Some(d.clone()));
-                                                preview_pending.set(true)
                                             }
                                         }
                                     },
@@ -150,9 +112,6 @@ fn TemplateForm(
                         save_status.set(None);
 
                         if let Some(template) = template.write().as_mut() {
-                            info!("Updating template");
-
-                            preview_pending.set(true);
                             template.content = evt.value();
                         }
                     }
@@ -269,49 +228,75 @@ fn TemplateVariables(device_id: Memo<Option<i64>>, template_id: Memo<Option<i64>
 
 #[component]
 fn TemplatePreview(
-    selected_device: WriteStore<Option<Device>>,
-    preview_loading: Signal<bool>,
-    preview_b64: ReadStore<Option<String>>,
+    device: WriteSignal<Device>,
+    template: ReadSignal<Template>,
+    render_error: WriteStore<Option<String>>,
 ) -> Element {
-    match selected_device() {
-        Some(device) => {
-            rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "p-4 border-b border-gray-100",
-                        div { class: "flex items-center gap-2",
-                            span { class: "text-sm font-medium text-gray-700", "Preview" }
-                            if preview_loading() {
-                                div { class: "w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
-                            }
-                        }
-                    }
-                    div { class: "p-4 bg-gray-50",
-                        div {
-                            class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
-                            style: "width: {device.width}px; height: {device.height}px;",
+    let mut image = use_store(|| None::<String>);
+    let mut preview_loading = use_signal(|| false);
+    let (tx, mut rx) = tokio::sync::watch::channel(true);
 
-                            match preview_b64() {
-                                Some(b64) => rsx! {
-                                    img {
-                                        src: "data:image/bmp;base64,{b64}",
-                                        alt: "Template preview",
-                                        class: "max-w-none",
-                                        style: "image-rendering: pixelated;",
-                                    }
-                                },
-                                None => rsx! {
-                                    p { class: "text-gray-300 text-sm", "No preview available" }
-                                },
+    use_effect(move || {
+        device();
+        template();
+        tx.send(true).ok();
+    });
+    spawn(async move {
+        loop {
+            if let Err(_) = rx.changed().await {
+                break;
+            }
+
+            preview_loading.set(true);
+            
+            match get_template_preview(device().id, template()).await {
+                Ok(i) => {
+                    render_error.set(None);
+
+                    image.set(Some(i))
+                }
+                Err(e) => {
+                    render_error.set(Some(format!("{:?}", e)));
+                }
+            }
+        
+            preview_loading.set(false);
+        }
+    });
+
+    rsx! {
+        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+            div { class: "p-4 border-b border-gray-100",
+                div { class: "flex items-center gap-2",
+                    span { class: "text-sm font-medium text-gray-700", "Preview" }
+                    if preview_loading() {
+                        div { class: "w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" }
+                    }
+                }
+            }
+            div { class: "p-4 bg-gray-50",
+                div {
+                    class: "flex items-center justify-center bg-white border border-gray-200 rounded shadow-sm",
+                    style: "width: {device().width}px; height: {device().height}px;",
+
+                    match image() {
+                        Some(b64) => rsx! {
+                            img {
+                                src: "data:image/bmp;base64,{b64}",
+                                alt: "Template preview",
+                                class: "max-w-none",
+                                style: "image-rendering: pixelated;",
                             }
-                        }
+                        },
+                        None => rsx! {
+                            p { class: "text-gray-300 text-sm", "No preview available" }
+                        },
                     }
                 }
             }
         }
-        None => {
-            rsx! { "Loading" }
-        }
     }
+
 }
 
 #[component]

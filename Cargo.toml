@@ -13,7 +13,7 @@ base64 = "0.22"
 
 # Server-only dependencies (not WASM-compatible)
 axum = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
+tokio = { version = "1", features = ["sync", "macros"]}
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
@@ -34,8 +34,9 @@ names = {version="0.14.0", optional=true}
 web = ["dioxus/web"]
 server = [
     "dioxus/server",
+    "tokio/full",
     "dep:axum",
-    "dep:tokio",
+
     "dep:tower",
     "dep:tower-http",
     "dep:tracing-subscriber",
