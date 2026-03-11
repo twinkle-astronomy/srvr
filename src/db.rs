@@ -148,7 +148,7 @@ pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {
     Ok(())
 }
 
-pub async fn get_device(device_id: i64) -> Result<Option<Device>, sqlx::error::Error> {
+pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
     sqlx::query_as(
         "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
          FROM devices
@@ -156,7 +156,7 @@ pub async fn get_device(device_id: i64) -> Result<Option<Device>, sqlx::error::E
          ORDER BY last_seen_at DESC"
     )
         .bind(device_id)
-        .fetch_optional(get())
+        .fetch_one(get())
         .await
 }
 
@@ -275,19 +275,20 @@ pub async fn create_prometheus_query(
     name: &str,
     addr: &str,
     query: &str,
-) -> Result<(), sqlx::error::Error> {
-    sqlx::query(
+) -> Result<PrometheusQuery, sqlx::error::Error> {
+    let r = sqlx::query(
         "INSERT INTO prometheus_queries (template_id, name, addr, query, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+         RETURNING *",
     )
     .bind(template_id)
     .bind(name)
     .bind(addr)
     .bind(query)
-    .execute(get())
+    .fetch_one(get())
     .await?;
 
-    Ok(())
+    PrometheusQuery::from_row(&r)
 }
 
 pub async fn get_prometheus_queries(

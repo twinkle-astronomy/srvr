@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, Template};
+use crate::models::{
+    Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, RenderContext, Template,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ServerInfo {
@@ -98,21 +100,13 @@ mod utils {
 
 #[server]
 pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError> {
-    use crate::db::{get_device, get_template};
     use base64::Engine;
 
-    let device = get_device(device_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unablle to query db: {:?}", e)))?
-        .ok_or_else(|| {
-            ServerFnError::new(format!("Unable to find device with id: {:?}", device_id))
-        })?;
-
-    let template = get_template()
+    let render_context = get_render_context(device_id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unablle to query db: {:?}", e)))?;
 
-    match crate::device::renderer::render_screen(&device, &template).await {
+    match crate::device::renderer::render_screen(&render_context).await {
         Ok(bmp_bytes) => {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
             Ok(encoded)
@@ -125,21 +119,10 @@ pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError>
 }
 
 #[server]
-pub async fn get_template_preview(
-    device_id: i64,
-    template: Template,
-) -> Result<String, ServerFnError> {
-    use crate::db::get_device;
+pub async fn get_template_preview(render_context: RenderContext) -> Result<String, ServerFnError> {
     use base64::Engine;
 
-    let device = get_device(device_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unablle to query db: {:?}", e)))?
-        .ok_or_else(|| {
-            ServerFnError::new(format!("Unable to find device with id: {:?}", device_id))
-        })?;
-
-    let bmp_bytes = crate::device::renderer::render_screen(&device, &template)
+    let bmp_bytes = crate::device::renderer::render_screen(&render_context)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to render screen: {}", e)))?;
 
@@ -173,7 +156,28 @@ pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
 }
 
 #[server]
-pub async fn get_device_by_id(id: i64) -> Result<Option<Device>, ServerFnError> {
+pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError> {
+    let device = crate::db::get_device(id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    let template = crate::db::get_template()
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    Ok(RenderContext {
+        device,
+        template,
+        prometheus_queries,
+    })
+}
+
+#[server]
+pub async fn get_device_by_id(id: i64) -> Result<Device, ServerFnError> {
     crate::db::get_device(id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
@@ -194,15 +198,22 @@ pub async fn delete_device(id: i64) -> Result<(), ServerFnError> {
 }
 
 #[server]
-pub async fn update_prometheus_query(
-    id: i64,
-    name: String,
-    addr: String,
-    query: String,
-) -> Result<(), ServerFnError> {
-    crate::db::update_prometheus_query(id, &name, &addr, &query)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to update query: {:?}", e)))
+pub async fn save_prometheus_query(pq: PrometheusQuery) -> Result<PrometheusQuery, ServerFnError> {
+    match pq.id {
+        Some(id) => {
+            crate::db::update_prometheus_query(id, &pq.name, &pq.addr, &pq.query)
+                .await
+                .map_err(|e| ServerFnError::new(format!("Unable to update query: {:?}", e)))?;
+            Ok(pq)
+        }
+        None => {
+            let f =
+                crate::db::create_prometheus_query(pq.template_id, &pq.name, &pq.addr, &pq.query)
+                    .await
+                    .map_err(|e| ServerFnError::new(format!("Unable to create query: {:?}", e)))?;
+            Ok(f)
+        }
+    }
 }
 
 #[server]
@@ -210,18 +221,6 @@ pub async fn delete_prometheus_query(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_prometheus_query(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to delete query: {:?}", e)))
-}
-
-#[server]
-pub async fn create_prometheus_query(
-    template_id: i64,
-    name: String,
-    addr: String,
-    query: String,
-) -> Result<(), ServerFnError> {
-    crate::db::create_prometheus_query(template_id, &name, &addr, &query)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to create query: {:?}", e)))
 }
 
 #[server]
@@ -234,14 +233,58 @@ pub async fn get_prometheus_queries_for_template(
 }
 
 #[server]
+pub async fn execute_prometheus_query(
+    query: PrometheusQuery,
+) -> Result<PrometheusQueryResult, ServerFnError> {
+    use crate::models::PrometheusMetricResult;
+    let client = match prometheus_http_query::Client::try_from(query.addr.as_str()) {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(PrometheusQueryResult {
+                query_name: query.name.clone(),
+                results: vec![],
+                error: Some(format!("Invalid prometheus address: {e}")),
+            });
+        }
+    };
+
+    match client.query(query.query.as_str()).get().await {
+        Ok(response) => {
+            let metrics = response
+                .data()
+                .as_vector()
+                .map(|v| {
+                    v.iter()
+                        .map(|x| PrometheusMetricResult {
+                            labels: x.metric().clone(),
+                            value: x.sample().value(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(PrometheusQueryResult {
+                query_name: query.name.clone(),
+                results: metrics,
+                error: None,
+            })
+        }
+        Err(e) => Ok(PrometheusQueryResult {
+            query_name: query.name.clone(),
+            results: vec![],
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+#[server]
 pub async fn execute_prometheus_queries(
-    template_id: i64,
+    queries: Vec<PrometheusQuery>,
 ) -> Result<Vec<PrometheusQueryResult>, ServerFnError> {
     use crate::models::PrometheusMetricResult;
 
-    let queries = crate::db::get_prometheus_queries(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))?;
+    // let queries = crate::db::get_prometheus_queries(template_id)
+    //     .await
+    //     .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))?;
 
     let mut results = Vec::with_capacity(queries.len());
     for query in &queries {
@@ -292,23 +335,14 @@ pub async fn execute_prometheus_queries(
 
 #[server]
 pub async fn get_template_context(
-    device_id: i64,
-    _: i64,
+    render_context: RenderContext,
 ) -> Result<Vec<TemplateVar>, ServerFnError> {
     use crate::{device::renderer::render_vars, frontend::server_fns::utils::obj_to_template_var};
 
-    let device = crate::db::get_device(device_id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .ok_or_else(|| ServerFnError::new(format!("Device {device_id} not found")))?;
-
-    let template = crate::db::get_template()
+    let device_obj = render_vars(&render_context)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    let device_obj = render_vars(&device, &template)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
     let mut vars: Vec<TemplateVar> = vec![];
     obj_to_template_var(&"".to_string(), &mut vars, &device_obj);
 

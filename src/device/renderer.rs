@@ -6,10 +6,7 @@ use dioxus::prelude::*;
 use liquid::Object;
 use thiserror::Error;
 
-use crate::{
-    db,
-    models::{Device, Template},
-};
+use crate::models::RenderContext;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -25,12 +22,16 @@ pub enum Error {
     TzError(#[from] chrono_tz::ParseError),
 }
 
-pub async fn render_vars(device: &Device, template: &Template) -> Result<Object, Error> {
-    let prometheus_queries = db::get_prometheus_queries(template.id).await?;
+pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error> {
+    let prometheus_queries = &render_context.prometheus_queries;
+
     let mut prometheus_data: HashMap<String, Vec<Object>> =
         HashMap::with_capacity(prometheus_queries.len());
+
     for query in prometheus_queries {
-        prometheus_data.insert(query.name.clone(), query.get_render_obj().await?);
+        if let Ok(obj) = query.get_render_obj().await {
+            prometheus_data.insert(query.name.clone(), obj);
+        }
     }
 
     let tz: Tz = std::env::var("TZ").unwrap_or("UTC".to_string()).parse()?;
@@ -39,7 +40,7 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
     let time_in_tz: DateTime<Tz> = utc_now.with_timezone(&tz);
 
     Ok(liquid::object!({
-        "device": device.get_render_obj(),
+        "device": render_context.device.get_render_obj(),
         "time": time_in_tz.format("%I:%M %P").to_string(),
         "timezone": time_in_tz.format("%Z").to_string(),
         "date": time_in_tz.format("%Y-%m-%d").to_string(),
@@ -48,9 +49,11 @@ pub async fn render_vars(device: &Device, template: &Template) -> Result<Object,
 }
 
 /// Renders a 1-bit BMP image for e-ink displays using SVG + Liquid templates
-pub async fn render_screen(device: &Device, template: &Template) -> Result<Vec<u8>, Error> {
+pub async fn render_screen(render_context: &RenderContext) -> Result<Vec<u8>, Error> {
     // Render SVG from template
-    let svg_data = template.render(render_vars(device, template).await?)?;
+    let svg_data = render_context
+        .template
+        .render(render_vars(render_context).await?)?;
 
     Ok(svg_to_bmp(&svg_data)?)
 }

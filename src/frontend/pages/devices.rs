@@ -136,7 +136,7 @@ pub fn DeviceDetail(id: i64) -> Element {
         }
 
         match device() {
-            Some(Ok(Some(device))) => rsx! {
+            Some(Ok(device)) => rsx! {
                 div { class: "mb-8 flex items-start justify-between",
                     div {
                         h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "{device.friendly_id}" }
@@ -200,11 +200,6 @@ pub fn DeviceDetail(id: i64) -> Element {
                     }
                 }
                 DeviceLogs { logs: logs() }
-            },
-            Some(Ok(None)) => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center",
-                    p { class: "text-gray-400", "Device not found" }
-                }
             },
             Some(Err(e)) => rsx! {
                 div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center",

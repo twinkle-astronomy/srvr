@@ -1,11 +1,10 @@
-
 use dioxus::prelude::*;
 #[cfg(feature = "server")]
 use sqlx::FromRow;
 
 use std::collections::HashMap;
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
@@ -14,13 +13,27 @@ pub mod server;
 #[cfg_attr(feature = "server", derive(FromRow))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PrometheusQuery {
-    pub id: i64,
+    pub id: Option<i64>,
     pub name: String,
     pub template_id: i64,
     pub addr: String,
     pub query: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+impl PrometheusQuery {
+    pub fn new(template_id: i64) -> Self {
+        Self {
+            id: None,
+            template_id,
+            name: "".to_string(),
+            addr: "".to_string(),
+            query: "".to_string(),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        }
+    }
 }
 
 #[cfg_attr(feature = "server", derive(FromRow))]
@@ -47,6 +60,13 @@ pub struct Device {
     pub rssi: Option<String>,
     pub last_seen_at: String,
     pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Store)]
+pub struct RenderContext {
+    pub device: Device,
+    pub template: Template,
+    pub prometheus_queries: Vec<PrometheusQuery>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

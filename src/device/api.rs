@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
-    db::{get_device, get_device_id_by_access_token, get_template, insert_device_logs},
+    db::{get_device_id_by_access_token, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
+    frontend::server_fns::get_render_context,
     models::DeviceLogEntry,
 };
 
@@ -231,30 +232,15 @@ struct RenderQuery {
 
 // GET /render/screen.bmp - Render screen image
 async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
-    let device = match get_device(params.device_id).await {
-        Ok(Some(d)) => d,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("Unable to find device with id: {}", params.device_id),
-            )
-                .into_response();
-        }
+    let render_context = match get_render_context(params.device_id).await {
+        Ok(d) => d,
         Err(e) => {
             error!("Error: {:?}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response();
         }
     };
 
-    let template = match get_template().await {
-        Ok(t) => t,
-        Err(e) => {
-            error!("Error: {:?}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response();
-        }
-    };
-
-    match renderer::render_screen(&device, &template).await {
+    match renderer::render_screen(&render_context).await {
         Ok(image) => (StatusCode::OK, [("Content-Type", "image/bmp")], image).into_response(),
         Err(e) => {
             error!("Error: {:?}", e);
