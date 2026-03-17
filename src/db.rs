@@ -225,6 +225,7 @@ pub async fn create_device(
     let device_id: SqliteRow = sqlx::query(
         "INSERT INTO devices (access_token, mac_address, model, friendly_id, battery_voltage, fw_version, rssi, width, height) \
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+        ON CONFLICT(mac_address) DO UPDATE SET mac_address = excluded.mac_address \
         RETURNING *",
     )
     .bind(access_token)

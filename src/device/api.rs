@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::Utc;
+use chrono::{Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 use tracing::{error, info};
@@ -124,7 +124,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let response = DisplayResponse {
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 1 * 60,
+        refresh_rate: 60 - Local::now().second(),
         update_firmware: false,
         maximum_compatibility: false,
     };
