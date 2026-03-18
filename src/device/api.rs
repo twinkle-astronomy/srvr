@@ -126,7 +126,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         filename: Some(format!("screen_{}.bmp", timestamp)),
         refresh_rate: 60 - Local::now().second(),
         update_firmware: false,
-        maximum_compatibility: false,
+        maximum_compatibility: device.maximum_compatibility,
     };
 
     (StatusCode::OK, Json(response)).into_response()

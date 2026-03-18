@@ -27,3 +27,7 @@ scrape_configs:
         - 'pico-climate-93818635.lan:80'
         labels:
           location: "Chris Bedroom"
+      - targets:
+        - 'pico-climate-e38a2a2a.lan:80'
+        labels:
+          location: "Living Room"

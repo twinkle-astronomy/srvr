@@ -36,13 +36,11 @@ pub fn get() -> &'static SqlitePool {
         .expect("Database not initialized. Call db::init() first.")
 }
 
-pub async fn get_template() -> Result<Template, sqlx::error::Error> {
+pub async fn get_default_template() -> Result<Template, sqlx::error::Error> {
     let conn = get();
 
     match sqlx::query_as(
-        r#"
-        SELECT id, content, updated_at, created_at FROM templates
-    "#,
+        "SELECT id, name, content, updated_at, created_at FROM templates ORDER BY id ASC LIMIT 1",
     )
     .fetch_optional(conn)
     .await
@@ -53,18 +51,15 @@ pub async fn get_template() -> Result<Template, sqlx::error::Error> {
             let svg_template = include_str!("../assets/default_screen.svg.liquid");
 
             let _ = sqlx::query(
-                "INSERT INTO templates (content, updated_at, created_at) \
-                VALUES (?, datetime('now'), datetime('now')) \
-                RETURNING id, content, updated_at, created_at",
+                "INSERT INTO templates (name, content, updated_at, created_at) \
+                VALUES ('Default', ?, datetime('now'), datetime('now'))",
             )
             .bind(&svg_template)
             .execute(conn)
             .await;
 
             sqlx::query_as(
-                r#"
-                    SELECT id, content, updated_at, created_at FROM templates
-                "#,
+                "SELECT id, name, content, updated_at, created_at FROM templates ORDER BY id ASC LIMIT 1",
             )
             .fetch_one(conn)
             .await
@@ -74,6 +69,77 @@ pub async fn get_template() -> Result<Template, sqlx::error::Error> {
             Err(e)
         }
     }
+}
+
+pub async fn get_templates() -> Result<Vec<Template>, sqlx::error::Error> {
+    sqlx::query_as("SELECT id, name, content, updated_at, created_at FROM templates ORDER BY name")
+        .fetch_all(get())
+        .await
+}
+
+pub async fn get_template_by_id(id: i64) -> Result<Template, sqlx::error::Error> {
+    sqlx::query_as("SELECT id, name, content, updated_at, created_at FROM templates WHERE id = ?")
+        .bind(id)
+        .fetch_one(get())
+        .await
+}
+
+pub async fn get_template_for_device(device_id: i64) -> Result<Template, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT t.id, t.name, t.content, t.updated_at, t.created_at \
+         FROM templates t \
+         JOIN devices d ON d.template_id = t.id \
+         WHERE d.id = ?",
+    )
+    .bind(device_id)
+    .fetch_one(get())
+    .await
+}
+
+pub async fn create_template(name: &str, content: &str) -> Result<Template, sqlx::error::Error> {
+    let row: SqliteRow = sqlx::query(
+        "INSERT INTO templates (name, content, updated_at, created_at) \
+         VALUES (?, ?, datetime('now'), datetime('now')) \
+         RETURNING *",
+    )
+    .bind(name)
+    .bind(content)
+    .fetch_one(get())
+    .await?;
+
+    Template::from_row(&row)
+}
+
+pub async fn delete_template(id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM templates WHERE id = ?")
+        .bind(id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
+pub async fn update_device_template(
+    device_id: i64,
+    template_id: i64,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE devices SET template_id = ? WHERE id = ?")
+        .bind(template_id)
+        .bind(device_id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
+pub async fn update_device_maximum_compatibility(
+    device_id: i64,
+    maximum_compatibility: bool,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE devices SET maximum_compatibility = ? WHERE id = ?")
+        .bind(maximum_compatibility)
+        .bind(device_id)
+        .execute(get())
+        .await?;
+    Ok(())
 }
 
 pub async fn get_device_logs(
@@ -150,7 +216,7 @@ pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {
 
 pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, last_seen_at, created_at \
          FROM devices
          WHERE id = $1
          ORDER BY last_seen_at DESC"
@@ -162,21 +228,24 @@ pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
 
 pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, last_seen_at, created_at \
          FROM devices ORDER BY last_seen_at DESC"
     )
         .fetch_all(get())
         .await
 }
 
-pub async fn update_template(id: i64, content: &str) -> Result<(), sqlx::error::Error> {
+pub async fn update_template(id: i64, name: &str, content: &str) -> Result<(), sqlx::error::Error> {
     let conn = get();
 
-    sqlx::query("UPDATE templates SET content = ?, updated_at = datetime('now') WHERE id = ?")
-        .bind(content)
-        .bind(id)
-        .execute(conn)
-        .await?;
+    sqlx::query(
+        "UPDATE templates SET name = ?, content = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(name)
+    .bind(content)
+    .bind(id)
+    .execute(conn)
+    .await?;
 
     Ok(())
 }
@@ -222,9 +291,11 @@ pub async fn create_device(
     battery_voltage: Option<f32>,
     rssi: Option<&str>,
 ) -> Result<Device, sqlx::error::Error> {
+    let default_template = get_default_template().await?;
+
     let device_id: SqliteRow = sqlx::query(
-        "INSERT INTO devices (access_token, mac_address, model, friendly_id, battery_voltage, fw_version, rssi, width, height) \
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+        "INSERT INTO devices (access_token, mac_address, model, friendly_id, battery_voltage, fw_version, rssi, width, height, template_id) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
         ON CONFLICT(mac_address) DO UPDATE SET mac_address = excluded.mac_address \
         RETURNING *",
     )
@@ -237,6 +308,7 @@ pub async fn create_device(
     .bind(rssi)
     .bind(width)
     .bind(height)
+    .bind(default_template.id)
     .fetch_one(get())
     .await?;
 

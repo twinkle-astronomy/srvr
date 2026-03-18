@@ -40,6 +40,7 @@ impl PrometheusQuery {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Store)]
 pub struct Template {
     pub id: i64,
+    pub name: String,
     pub content: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
@@ -58,6 +59,8 @@ pub struct Device {
     pub height: i64,
     pub battery_voltage: Option<f32>,
     pub rssi: Option<String>,
+    pub template_id: i64,
+    pub maximum_compatibility: bool,
     pub last_seen_at: String,
     pub created_at: String,
 }

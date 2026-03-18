@@ -4,7 +4,7 @@ pub mod server_fns;
 
 use dioxus::prelude::*;
 
-use pages::{Dashboard, DeviceDetail, Devices, TemplateEditor};
+use pages::{Dashboard, DeviceDetail, Devices, TemplateEditor, Templates};
 
 #[derive(Routable, Clone, PartialEq, Debug)]
 #[rustfmt::skip]
@@ -16,8 +16,10 @@ enum Route {
         Devices {},
         #[route("/devices/:id")]
         DeviceDetail { id: i64 },
-        #[route("/template")]
-        TemplateEditor {},
+        #[route("/templates")]
+        Templates {},
+        #[route("/template/:id")]
+        TemplateEditor { id: i64 },
     #[end_layout]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },

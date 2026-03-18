@@ -2,8 +2,9 @@ use dioxus::prelude::*;
 
 use crate::{
     frontend::server_fns::{
-        delete_prometheus_query, execute_prometheus_query, save_prometheus_query
-    }, models::{PrometheusQuery, Template}
+        delete_prometheus_query, execute_prometheus_query, save_prometheus_query,
+    },
+    models::{PrometheusQuery, Template},
 };
 
 #[component]

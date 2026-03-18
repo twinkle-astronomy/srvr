@@ -131,8 +131,8 @@ pub async fn get_template_preview(render_context: RenderContext) -> Result<Strin
 }
 
 #[server]
-pub async fn get_template() -> Result<Template, ServerFnError> {
-    let template = crate::db::get_template()
+pub async fn get_default_template() -> Result<Template, ServerFnError> {
+    let template = crate::db::get_default_template()
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))?;
 
@@ -140,12 +140,57 @@ pub async fn get_template() -> Result<Template, ServerFnError> {
 }
 
 #[server]
-pub async fn save_template(id: i64, content: String) -> Result<(), ServerFnError> {
-    crate::db::update_template(id, &content)
+pub async fn get_templates() -> Result<Vec<Template>, ServerFnError> {
+    crate::db::get_templates()
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn get_template_by_id(id: i64) -> Result<Template, ServerFnError> {
+    crate::db::get_template_by_id(id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+#[server]
+pub async fn create_template(name: String, content: String) -> Result<Template, ServerFnError> {
+    crate::db::create_template(&name, &content)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to create template: {:?}", e)))
+}
+
+#[server]
+pub async fn delete_template(id: i64) -> Result<(), ServerFnError> {
+    crate::db::delete_template(id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to delete template: {:?}", e)))
+}
+
+#[server]
+pub async fn save_template(id: i64, name: String, content: String) -> Result<(), ServerFnError> {
+    crate::db::update_template(id, &name, &content)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to save template: {:?}", e)))?;
 
     Ok(())
+}
+
+#[server]
+pub async fn update_device_template(device_id: i64, template_id: i64) -> Result<(), ServerFnError> {
+    crate::db::update_device_template(device_id, template_id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to update device template: {:?}", e)))
+}
+
+#[server]
+pub async fn update_device_maximum_compatibility(
+    device_id: i64,
+    maximum_compatibility: bool,
+) -> Result<(), ServerFnError> {
+    crate::db::update_device_maximum_compatibility(device_id, maximum_compatibility)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to update maximum compatibility: {:?}", e)))
 }
 
 #[server]
@@ -161,7 +206,31 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
-    let template = crate::db::get_template()
+    let template = crate::db::get_template_for_device(id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    Ok(RenderContext {
+        device,
+        template,
+        prometheus_queries,
+    })
+}
+
+#[server]
+pub async fn get_render_context_for_template(
+    device_id: i64,
+    template_id: i64,
+) -> Result<RenderContext, ServerFnError> {
+    let device = crate::db::get_device(device_id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
+    let template = crate::db::get_template_by_id(template_id)
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 

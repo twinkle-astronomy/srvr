@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
     delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview,
+    get_templates, update_device_maximum_compatibility, update_device_template,
 };
 use crate::models::{Device, DeviceLog};
 
@@ -175,6 +176,8 @@ pub fn DeviceDetail(id: i64) -> Element {
                             DetailRow { label: "Registered", value: device.created_at.clone() }
                             DetailRow { label: "Access Token", value: device.access_token.clone() }
                         }
+                        TemplateSelector { device_id: device.id, current_template_id: device.template_id }
+                        MaxCompatibilityToggle { device_id: device.id, current_value: device.maximum_compatibility }
                     }
 
                     div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6",
@@ -348,6 +351,104 @@ fn DetailRow(label: String, value: String) -> Element {
         div { class: "flex justify-between items-start py-2.5",
             span { class: "text-xs text-gray-400 shrink-0 mr-4", "{label}" }
             span { class: "text-sm text-gray-700 font-mono text-right break-all", "{value}" }
+        }
+    }
+}
+
+#[component]
+fn TemplateSelector(device_id: i64, current_template_id: i64) -> Element {
+    let templates = use_server_future(move || get_templates())?;
+    let mut save_status = use_signal(|| None::<Result<(), String>>);
+
+    rsx! {
+        div { class: "mt-4 pt-4 border-t border-gray-100",
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3", "Template" }
+            match templates() {
+                Some(Ok(templates)) => rsx! {
+                    div { class: "flex items-center gap-3",
+                        select {
+                            class: "text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                            value: "{current_template_id}",
+                            onchange: move |evt| {
+                                if let Ok(tid) = evt.value().parse::<i64>() {
+                                    save_status.set(None);
+                                    spawn(async move {
+                                        match update_device_template(device_id, tid).await {
+                                            Ok(()) => save_status.set(Some(Ok(()))),
+                                            Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                        }
+                                    });
+                                }
+                            },
+                            for t in templates {
+                                option {
+                                    value: "{t.id}",
+                                    selected: t.id == current_template_id,
+                                    "{t.name}"
+                                }
+                            }
+                        }
+                        match save_status() {
+                            Some(Ok(())) => rsx! {
+                                span { class: "text-sm text-green-600", "Saved!" }
+                            },
+                            Some(Err(e)) => rsx! {
+                                span { class: "text-sm text-red-500", "Error: {e}" }
+                            },
+                            None => rsx! {},
+                        }
+                    }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-sm text-red-400", "Error loading templates: {e}" }
+                },
+                None => rsx! {
+                    p { class: "text-sm text-gray-400", "Loading templates..." }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn MaxCompatibilityToggle(device_id: i64, current_value: bool) -> Element {
+    let mut checked = use_signal(move || current_value);
+    let mut save_status = use_signal(|| None::<Result<(), String>>);
+
+    rsx! {
+        div { class: "mt-4 pt-4 border-t border-gray-100",
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3", "Maximum Compatibility" }
+            div { class: "flex items-center gap-3",
+                label { class: "relative inline-flex items-center cursor-pointer",
+                    input {
+                        r#type: "checkbox",
+                        class: "sr-only peer",
+                        checked: checked(),
+                        onchange: move |evt| {
+                            let val = evt.checked();
+                            checked.set(val);
+                            save_status.set(None);
+                            spawn(async move {
+                                match update_device_maximum_compatibility(device_id, val).await {
+                                    Ok(()) => save_status.set(Some(Ok(()))),
+                                    Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                }
+                            });
+                        },
+                    }
+                    div { class: "w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-gray-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gray-900" }
+                }
+                match save_status() {
+                    Some(Ok(())) => rsx! {
+                        span { class: "text-sm text-green-600", "Saved!" }
+                    },
+                    Some(Err(e)) => rsx! {
+                        span { class: "text-sm text-red-500", "Error: {e}" }
+                    },
+                    None => rsx! {},
+                }
+            }
+            p { class: "text-xs text-gray-400 mt-2", "Enable if the device requires compatibility mode for rendering." }
         }
     }
 }

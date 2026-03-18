@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{get_devices, get_render_context};
+use crate::frontend::server_fns::{get_devices, get_render_context_for_template};
 use crate::models::{Device, RenderContext, RenderContextStoreExt};
 
 pub mod template_preview;
@@ -16,7 +16,7 @@ pub mod template_form;
 use template_form::TemplateForm;
 
 #[component]
-pub fn TemplateEditor() -> Element {
+pub fn TemplateEditor(id: i64) -> Element {
     let mut devices = use_store(|| vec![]);
     let mut render_context = use_store(|| None::<RenderContext>);
     let mut selected_device = use_store(|| None::<Device>);
@@ -29,7 +29,7 @@ pub fn TemplateEditor() -> Element {
 
     use_resource(move || async move {
         if let Some(selected_device) = selected_device() {
-            if let Ok(v) = get_render_context(selected_device.id).await {
+            if let Ok(v) = get_render_context_for_template(selected_device.id, id).await {
                 render_context.set(Some(v));
             }
         }
@@ -46,6 +46,13 @@ pub fn TemplateEditor() -> Element {
 
     rsx! {
         div { class: "mb-8",
+            div { class: "mb-2",
+                Link {
+                    to: super::super::Route::Templates {},
+                    class: "inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors",
+                    "\u{2190} Back to Templates"
+                }
+            }
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Template Editor" }
             p { class: "text-gray-500 mt-1", "Edit the SVG Liquid template used for device screens" }
         }
