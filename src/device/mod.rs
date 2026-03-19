@@ -9,6 +9,7 @@ use crate::{
 use thiserror::Error;
 
 pub mod api;
+pub(crate) mod liquid_filters;
 pub(crate) mod renderer;
 
 #[derive(Error, Debug)]

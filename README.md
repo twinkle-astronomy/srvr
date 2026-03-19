@@ -43,7 +43,7 @@ Use this docker-compose.yml to spin up a simple instance.
 ```yml
 services:
   srvr:
-    image: ghcr.io/twinkle-astronomy/srvr:0.0.17
+    image: ghcr.io/twinkle-astronomy/srvr:0.0.18
     volumes:
       - srvr-data:/data
     init: true
@@ -61,6 +61,39 @@ volumes:
 
 The service will be available at the machine's IP, port 80.
 
+
+## Template Filters
+
+In addition to the standard [Liquid filters](https://shopify.github.io/liquid/filters/), the following custom filters are available in templates:
+
+### `qrcode`
+
+Renders a string as a QR code inline SVG fragment.
+
+```liquid
+{{ "https://example.com" | qrcode }}
+{{ some_var | qrcode: module_size: 3 }}
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `module_size` | optional | Pixel size of each QR module (default: 1) |
+
+### `qrcode_wifi`
+
+Renders WiFi credentials as a QR code inline SVG fragment. The input value is the SSID.
+
+```liquid
+{{ "MyNetwork" | qrcode_wifi: password: "secret" }}
+{{ "MyNetwork" | qrcode_wifi: password: "secret", security: "WEP", module_size: 3 }}
+{{ "OpenNet" | qrcode_wifi: password: "", security: "nopass" }}
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `password` | required | WiFi password |
+| `security` | optional | Security type: `WPA` (default), `WEP`, or `nopass` |
+| `module_size` | optional | Pixel size of each QR module (default: 1) |
 
 ## License
 

@@ -2,11 +2,15 @@ use dioxus::prelude::*;
 use liquid::ParserBuilder;
 use liquid::{Error, Object};
 
+use crate::device::liquid_filters::{QrcodeFilterParser, QrcodeWifiFilterParser};
 use crate::models::{Device, PrometheusQuery, Template};
 
 impl Template {
     pub fn render(&self, globals: Object) -> Result<String, Error> {
-        let parser = ParserBuilder::with_stdlib().build()?;
+        let parser = ParserBuilder::with_stdlib()
+            .filter(QrcodeFilterParser)
+            .filter(QrcodeWifiFilterParser)
+            .build()?;
 
         let template = parser.parse(&self.content)?;
 
