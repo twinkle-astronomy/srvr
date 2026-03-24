@@ -1,9 +1,12 @@
 #!/bin/bash
 
-set -e 
+set -e
 
 mkdir .data/
 
-cargo install dioxus-cli
-cargo install sqlx-cli
+# Install cargo-binstall for fast prebuilt binary installs
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+
+cargo binstall -y dioxus-cli
+cargo binstall -y sqlx-cli
 rustup component add rustfmt

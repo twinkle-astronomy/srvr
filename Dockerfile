@@ -33,7 +33,10 @@ RUN ./bootstrap.sh
 
 FROM dev AS build
 COPY . /app
-RUN dx bundle --release
+RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \
+    dx bundle --release && \
+    cp -r /app/dist /home/dev/dist-output
 
 FROM debian:trixie-slim AS publish
 RUN apt-get update && apt-get install -y \
@@ -53,7 +56,7 @@ RUN chown dev:dev /data
 USER dev
 ENV USER=dev
 
-COPY --from=build /app/dist /dist
+COPY --from=build /home/dev/dist-output /dist
 
 WORKDIR /dist
 
