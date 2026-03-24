@@ -1,5 +1,4 @@
-
-FROM rust:1.93-trixie AS dev
+FROM rust:1.93-trixie AS base
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -30,8 +29,11 @@ WORKDIR /app
 COPY bootstrap.sh bootstrap.sh
 RUN ./bootstrap.sh
 
+# Dev target: adds sqlx-cli for local development (slow to compile, not needed for builds)
+FROM base AS dev
+RUN cargo install sqlx-cli
 
-FROM dev AS build
+FROM base AS build
 COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \

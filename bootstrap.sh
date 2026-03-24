@@ -8,5 +8,4 @@ mkdir .data/
 curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
 cargo binstall -y dioxus-cli
-cargo binstall -y sqlx-cli
 rustup component add rustfmt
