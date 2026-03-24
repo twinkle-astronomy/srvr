@@ -1,8 +1,8 @@
 use std::fmt;
 
 use liquid_core::{
-    parser::{FilterArguments, FilterReflection, ParameterReflection, ParseFilter},
     Error, Expression, Filter, Result, Runtime, Value, ValueView,
+    parser::{FilterArguments, FilterReflection, ParameterReflection, ParseFilter},
 };
 use qrcode::{Color, QrCode};
 
@@ -10,7 +10,10 @@ use qrcode::{Color, QrCode};
 
 /// Generates an inline SVG `<g>` element for a QR code.
 /// `module_size` is the pixel size of each module (dark/light square).
-fn qrcode_to_svg_group(data: &str, module_size: u32) -> std::result::Result<String, qrcode::types::QrError> {
+fn qrcode_to_svg_group(
+    data: &str,
+    module_size: u32,
+) -> std::result::Result<String, qrcode::types::QrError> {
     let code = QrCode::new(data.as_bytes())?;
     let width = code.width();
 
@@ -18,9 +21,8 @@ fn qrcode_to_svg_group(data: &str, module_size: u32) -> std::result::Result<Stri
     let quiet = 4u32;
     let total = (width as u32 + quiet * 2) * module_size;
 
-    let mut svg = format!(
-        r#"<g><rect x="0" y="0" width="{total}" height="{total}" fill="white"/>"#
-    );
+    let mut svg =
+        format!(r#"<g><rect x="0" y="0" width="{total}" height="{total}" fill="white"/>"#);
 
     for y in 0..width {
         for x in 0..width {
@@ -230,14 +232,22 @@ impl ParseFilter for QrcodeWifiFilterParser {
                 "password" => password = Some(expr),
                 "security" => security = Some(expr),
                 "module_size" => module_size = Some(expr),
-                _ => return Err(Error::with_msg(format!("qrcode_wifi: unknown argument '{key}'"))),
+                _ => {
+                    return Err(Error::with_msg(format!(
+                        "qrcode_wifi: unknown argument '{key}'"
+                    )));
+                }
             }
         }
 
         let password =
             password.ok_or_else(|| Error::with_msg("qrcode_wifi: 'password' is required"))?;
 
-        Ok(Box::new(QrcodeWifiFilter { password, security, module_size }))
+        Ok(Box::new(QrcodeWifiFilter {
+            password,
+            security,
+            module_size,
+        }))
     }
     fn reflection(&self) -> &dyn FilterReflection {
         self
