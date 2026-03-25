@@ -35,8 +35,6 @@ impl Device {
 
 impl PrometheusQuery {
     pub async fn get_render_obj(&self) -> Result<Vec<Object>, prometheus_http_query::error::Error> {
-        // let prometheus_url =
-        //     std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
         let client = prometheus_http_query::Client::try_from(self.addr.as_str())?;
 
         Ok(client
