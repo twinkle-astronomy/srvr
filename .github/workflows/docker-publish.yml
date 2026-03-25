@@ -3,7 +3,6 @@ name: Build and publish Docker image
 on:
   push:
     tags: ["v*"]
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -58,6 +57,8 @@ jobs:
           target: publish
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }},mode=max
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
