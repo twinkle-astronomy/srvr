@@ -20,11 +20,17 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
+          # - linux/arm64
+          # - linux/arm/v7
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare platform pair
+        id: platform
+        run: echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
+        env:
+          platform: ${{ matrix.platform }}
 
       - uses: docker/setup-qemu-action@v3
 
@@ -51,6 +57,8 @@ jobs:
           target: publish
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }},mode=max
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
