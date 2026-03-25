@@ -8,6 +8,7 @@ mod models;
 fn main() {
     #[cfg(feature = "server")]
     {
+        
         use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
         tracing_subscriber::registry()
