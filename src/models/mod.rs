@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-
 #[cfg(feature = "server")]
 use sqlx::FromRow;
 
