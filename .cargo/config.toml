@@ -5,3 +5,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 incremental = false
+strip = "symbols"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "debuginfo=0"]

@@ -35,10 +35,11 @@ FROM base AS dev
 RUN cargo install sqlx-cli
 
 FROM base AS build
+RUN cargo binstall -y wasm-bindgen-cli@0.2.108
 COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \
-    dx bundle --release && \
+    NO_DOWNLOADS=1 dx bundle --release --debug-symbols false && \
     cp -r /app/dist /home/dev/dist-output
 
 FROM debian:trixie-slim AS publish
