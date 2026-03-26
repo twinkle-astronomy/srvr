@@ -306,16 +306,17 @@ pub async fn execute_prometheus_query(
     query: PrometheusQuery,
 ) -> Result<PrometheusQueryResult, ServerFnError> {
     use crate::models::{PrometheusMetricResult, server::http_client};
-    let client = match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
-        Ok(c) => c,
-        Err(e) => {
-            return Ok(PrometheusQueryResult {
-                query_name: query.name.clone(),
-                results: vec![],
-                error: Some(format!("Invalid prometheus address: {e}")),
-            });
-        }
-    };
+    let client =
+        match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(PrometheusQueryResult {
+                    query_name: query.name.clone(),
+                    results: vec![],
+                    error: Some(format!("Invalid prometheus address: {e}")),
+                });
+            }
+        };
 
     match client.query(query.query.as_str()).get().await {
         Ok(response) => {
@@ -359,17 +360,18 @@ pub async fn execute_prometheus_queries(
     for query in &queries {
         use crate::models::server::http_client;
 
-        let client = match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
-            Ok(c) => c,
-            Err(e) => {
-                results.push(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: vec![],
-                    error: Some(format!("Invalid prometheus address: {e}")),
-                });
-                continue;
-            }
-        };
+        let client =
+            match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
+                Ok(c) => c,
+                Err(e) => {
+                    results.push(PrometheusQueryResult {
+                        query_name: query.name.clone(),
+                        results: vec![],
+                        error: Some(format!("Invalid prometheus address: {e}")),
+                    });
+                    continue;
+                }
+            };
 
         match client.query(query.query.as_str()).get().await {
             Ok(response) => {

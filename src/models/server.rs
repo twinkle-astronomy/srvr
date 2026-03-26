@@ -42,7 +42,8 @@ impl Device {
 
 impl PrometheusQuery {
     pub async fn get_render_obj(&self) -> Result<Vec<Object>, prometheus_http_query::error::Error> {
-        let client = prometheus_http_query::Client::from(http_client().clone(), self.addr.as_str())?;
+        let client =
+            prometheus_http_query::Client::from(http_client().clone(), self.addr.as_str())?;
 
         Ok(client
             .query(self.query.as_str())
