@@ -23,6 +23,7 @@ tiny-skia = { version = "0.11", optional = true }
 liquid = { version = "0.26", optional = true }
 liquid-core = { version = "0.26", optional = true }
 prometheus-http-query = { version = "0.8", optional = true }
+reqwest = { version = "0.12", default-features = false, optional = true }
 axum-prometheus = { version = "0.10.0", optional = true }
 thiserror = { version = "2.0.18", optional = true }
 image = { version = "0.25", optional = true }
@@ -48,6 +49,7 @@ server = [
     "dep:liquid",
     "dep:liquid-core",
     "dep:prometheus-http-query",
+    "dep:reqwest",
     "dep:axum-prometheus",
     "dep:thiserror",
     "dep:image",

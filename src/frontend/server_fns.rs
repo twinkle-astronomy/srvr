@@ -305,8 +305,8 @@ pub async fn get_prometheus_queries_for_template(
 pub async fn execute_prometheus_query(
     query: PrometheusQuery,
 ) -> Result<PrometheusQueryResult, ServerFnError> {
-    use crate::models::PrometheusMetricResult;
-    let client = match prometheus_http_query::Client::try_from(query.addr.as_str()) {
+    use crate::models::{PrometheusMetricResult, server::http_client};
+    let client = match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
         Ok(c) => c,
         Err(e) => {
             return Ok(PrometheusQueryResult {
@@ -357,7 +357,9 @@ pub async fn execute_prometheus_queries(
 
     let mut results = Vec::with_capacity(queries.len());
     for query in &queries {
-        let client = match prometheus_http_query::Client::try_from(query.addr.as_str()) {
+        use crate::models::server::http_client;
+
+        let client = match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
             Ok(c) => c,
             Err(e) => {
                 results.push(PrometheusQueryResult {

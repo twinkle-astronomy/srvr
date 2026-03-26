@@ -4790,6 +4790,7 @@ dependencies = [
  "names",
  "prometheus-http-query",
  "qrcode",
+ "reqwest",
  "resvg",
  "serde",
  "serde_json",
