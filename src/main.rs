@@ -61,7 +61,6 @@ fn main() {
             Ok(router)
         });
     }
-
     #[cfg(not(feature = "server"))]
     dioxus::launch(frontend::App);
 }
