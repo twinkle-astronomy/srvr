@@ -1,0 +1,101 @@
+stages:
+  - build
+  - manifest
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE/srvr
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+.docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_BUILDKIT: "1"
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        TAG="$CI_COMMIT_TAG"
+      else
+        TAG="${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+      fi
+    - docker build
+        --target publish
+        --tag "$IMAGE:${TAG}-${ARCH}"
+        .
+    - docker push "$IMAGE:${TAG}-${ARCH}"
+    - docker tag "$IMAGE:${TAG}-${ARCH}" "$IMAGE:latest-${ARCH}"
+    - docker push "$IMAGE:latest-${ARCH}"
+
+build-amd64:
+  extends: .docker-build
+  tags: [amd64]
+  variables:
+    ARCH: amd64
+
+build-arm64:
+  extends: .docker-build
+  tags: [arm64]
+  variables:
+    ARCH: arm64
+
+build-armv7:
+  extends: .docker-build
+  tags: [armv7]
+  variables:
+    ARCH: armv7
+
+manifest:
+  stage: manifest
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  tags: [amd64]
+  needs:
+    - build-amd64
+    - build-arm64
+    - build-armv7
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        TAG="$CI_COMMIT_TAG"
+      else
+        TAG="${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+      fi
+    - docker manifest create "$IMAGE:${TAG}"
+        "$IMAGE:${TAG}-amd64"
+        "$IMAGE:${TAG}-arm64"
+        "$IMAGE:${TAG}-armv7"
+    - docker manifest annotate "$IMAGE:${TAG}" "$IMAGE:${TAG}-armv7"
+        --os linux --arch arm --variant v7
+    - docker manifest push "$IMAGE:${TAG}"
+    - docker manifest create "$IMAGE:latest"
+        "$IMAGE:latest-amd64"
+        "$IMAGE:latest-arm64"
+        "$IMAGE:latest-armv7"
+    - docker manifest annotate "$IMAGE:latest" "$IMAGE:latest-armv7"
+        --os linux --arch arm --variant v7
+    - docker manifest push "$IMAGE:latest"
+    - |
+      if echo "$CI_COMMIT_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+        MAJOR_MINOR=$(echo "$CI_COMMIT_TAG" | sed -E 's/^v([0-9]+\.[0-9]+)\..*/\1/')
+        docker manifest create "$IMAGE:${MAJOR_MINOR}" \
+          "$IMAGE:${TAG}-amd64" \
+          "$IMAGE:${TAG}-arm64" \
+          "$IMAGE:${TAG}-armv7"
+        docker manifest annotate "$IMAGE:${MAJOR_MINOR}" "$IMAGE:${TAG}-armv7" \
+          --os linux --arch arm --variant v7
+        docker manifest push "$IMAGE:${MAJOR_MINOR}"
+      fi
