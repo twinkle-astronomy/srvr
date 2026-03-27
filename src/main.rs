@@ -1,4 +1,6 @@
 #[cfg(feature = "server")]
+mod auth;
+#[cfg(feature = "server")]
 mod db;
 #[cfg(feature = "server")]
 mod device;
@@ -40,15 +42,33 @@ fn main() {
                 .expect("Failed to run database migrations");
             tracing::info!("Database initialized and migrations applied");
 
+            // Session store for auth
+            let session_store = tower_sessions_sqlx_store::SqliteStore::new(db.clone());
+            session_store
+                .migrate()
+                .await
+                .expect("Failed to migrate session store");
+
+            let session_layer = tower_sessions::SessionManagerLayer::new(session_store);
+            let auth_backend = crate::auth::Backend;
+            let auth_layer =
+                axum_login::AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
+
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
             let device_api = crate::device::api::router();
+            let auth_api = crate::auth::router();
 
             let router = dioxus::server::router(frontend::App)
                 .route(
                     "/metrics",
                     get(move || async move { metric_handle.render() }),
                 )
+                .route_layer(axum::middleware::from_fn(
+                    crate::auth::server_fn_auth_middleware,
+                ))
                 .merge(device_api)
+                .merge(auth_api)
+                .layer(auth_layer)
                 .layer(TraceLayer::new_for_http())
                 .layer(prometheus_layer)
                 .layer(

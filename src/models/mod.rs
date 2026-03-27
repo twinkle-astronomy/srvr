@@ -128,6 +128,22 @@ pub struct DeviceLogEntry {
     pub wifi_status: Option<String>,
 }
 
+#[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct User {
+    pub id: i64,
+    pub username: String,
+    pub password_hash: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AuthenticatedUser {
+    pub id: i64,
+    pub username: String,
+}
+
 impl Device {
     pub fn percent_charged(&self) -> Option<f32> {
         self.battery_voltage.map(|battery_voltage| {

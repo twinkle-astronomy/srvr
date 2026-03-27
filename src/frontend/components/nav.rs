@@ -12,10 +12,20 @@ pub fn Nav() -> Element {
                     to: Route::Dashboard {},
                     "TRMNL"
                 }
-                div { class: "flex items-center gap-1",
+                div { class: "flex items-center gap-1 flex-1",
                     NavLink { to: Route::Dashboard {}, label: "Dashboard" }
                     NavLink { to: Route::Devices {}, label: "Devices" }
                     NavLink { to: Route::Templates {}, label: "Templates" }
+                    NavLink { to: Route::Users {}, label: "Users" }
+                }
+                form {
+                    action: "/auth/logout",
+                    method: "POST",
+                    button {
+                        r#type: "submit",
+                        class: "text-gray-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                        "Logout"
+                    }
                 }
             }
         }

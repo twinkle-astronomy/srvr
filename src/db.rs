@@ -6,7 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::models::{Device, DeviceLog, DeviceLogEntry, PrometheusQuery, Template};
+use crate::models::{Device, DeviceLog, DeviceLogEntry, PrometheusQuery, Template, User};
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -376,4 +376,74 @@ pub async fn get_prometheus_queries(
     .bind(template_id)
     .fetch_all(get())
     .await
+}
+
+pub async fn user_count() -> Result<i64, sqlx::error::Error> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(get())
+        .await?;
+    Ok(row.0)
+}
+
+pub async fn get_user_by_id(id: i64) -> Result<Option<User>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(get())
+    .await
+}
+
+pub async fn get_user_by_username(username: &str) -> Result<Option<User>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?",
+    )
+    .bind(username)
+    .fetch_optional(get())
+    .await
+}
+
+pub async fn create_user(
+    username: &str,
+    password_hash: &str,
+) -> Result<User, sqlx::error::Error> {
+    let row: SqliteRow = sqlx::query(
+        "INSERT INTO users (username, password_hash, created_at, updated_at) \
+         VALUES (?, ?, datetime('now'), datetime('now')) \
+         RETURNING *",
+    )
+    .bind(username)
+    .bind(password_hash)
+    .fetch_one(get())
+    .await?;
+
+    User::from_row(&row)
+}
+
+pub async fn get_users() -> Result<Vec<User>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, username, password_hash, created_at, updated_at FROM users ORDER BY created_at",
+    )
+    .fetch_all(get())
+    .await
+}
+
+pub async fn update_user_password(
+    id: i64,
+    password_hash: &str,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(password_hash)
+        .bind(id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_user(id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(id)
+        .execute(get())
+        .await?;
+    Ok(())
 }

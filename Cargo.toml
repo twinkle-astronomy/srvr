@@ -32,6 +32,10 @@ itertools = {version = "0.14.0", optional = true}
 chrono-tz = {version="0.10.4", optional=true}
 names = {version="0.14.0", optional=true}
 qrcode = { version = "0.14.1", optional = true }
+argon2 = { version = "0.5", features = ["std"], optional = true }
+axum-login = { version = "0.18", optional = true }
+tower-sessions = { version = "0.14", optional = true }
+tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], optional = true }
 
 [features]
 web = ["dioxus/web"]
@@ -58,4 +62,8 @@ server = [
     "dep:chrono-tz",
     "dep:names",
     "dep:qrcode",
+    "dep:argon2",
+    "dep:axum-login",
+    "dep:tower-sessions",
+    "dep:tower-sessions-sqlx-store",
 ]

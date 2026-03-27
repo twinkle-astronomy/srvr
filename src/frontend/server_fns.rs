@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, RenderContext, Template,
+    AuthenticatedUser, Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, RenderContext,
+    Template,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -96,6 +97,70 @@ mod utils {
         vars.append(&mut scalar_vars);
         vars.append(&mut object_vars);
     }
+}
+
+#[cfg(feature = "server")]
+pub(crate) async fn require_auth() -> Result<AuthenticatedUser, ServerFnError> {
+    let auth: crate::auth::AuthSession = dioxus::fullstack::FullstackContext::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Auth extraction failed: {e}")))?;
+    match auth.user {
+        Some(user) => Ok(AuthenticatedUser {
+            id: user.id,
+            username: user.username,
+        }),
+        None => Err(ServerFnError::new("Not authenticated")),
+    }
+}
+
+#[server]
+pub async fn check_auth() -> Result<Option<AuthenticatedUser>, ServerFnError> {
+    let auth: crate::auth::AuthSession = dioxus::fullstack::FullstackContext::extract()
+        .await
+        .map_err(|e| ServerFnError::new(format!("Auth extraction failed: {e}")))?;
+    Ok(auth.user.map(|u| AuthenticatedUser {
+        id: u.id,
+        username: u.username,
+    }))
+}
+
+#[server]
+pub async fn check_needs_setup() -> Result<bool, ServerFnError> {
+    let count = crate::db::user_count()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(count == 0)
+}
+
+#[server]
+pub async fn get_all_users() -> Result<Vec<AuthenticatedUser>, ServerFnError> {
+    let users = crate::db::get_users()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(users
+        .into_iter()
+        .map(|u| AuthenticatedUser {
+            id: u.id,
+            username: u.username,
+        })
+        .collect())
+}
+
+#[server]
+pub async fn delete_user(user_id: i64) -> Result<(), ServerFnError> {
+    let current = require_auth().await?;
+    if current.id == user_id {
+        return Err(ServerFnError::new("Cannot delete yourself"));
+    }
+    let count = crate::db::user_count()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if count <= 1 {
+        return Err(ServerFnError::new("Cannot delete the last user"));
+    }
+    crate::db::delete_user(user_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 #[server]
