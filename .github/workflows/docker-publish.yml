@@ -20,8 +20,8 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
+          # - linux/arm64
+          # - linux/arm/v7
 
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,11 @@ jobs:
           platform: ${{ matrix.platform }}
 
       - uses: docker/setup-qemu-action@v3
+
+      - name: Debug builder state
+        run: |
+          docker ps -a --filter "name=builder"
+          docker volume ls
 
       - uses: docker/setup-buildx-action@v3
         with:
@@ -61,8 +66,6 @@ jobs:
           target: publish
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.platform.outputs.pair }},mode=max
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
