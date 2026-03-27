@@ -119,6 +119,20 @@ pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError>
 }
 
 #[server]
+pub async fn get_screen_preview_for_template(
+    device_id: i64,
+    template_id: i64,
+) -> Result<String, ServerFnError> {
+    use base64::Engine;
+
+    let render_context = get_render_context_for_template(device_id, template_id).await?;
+    let bmp_bytes = crate::device::renderer::render_screen(&render_context)
+        .await
+        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bmp_bytes))
+}
+
+#[server]
 pub async fn get_template_preview(render_context: RenderContext) -> Result<String, ServerFnError> {
     use base64::Engine;
 

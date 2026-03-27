@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
-    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview,
+    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template,
     get_templates, update_device_maximum_compatibility, update_device_template,
 };
 use crate::models::{Device, DeviceLog};
@@ -123,9 +123,29 @@ fn DeviceCard(device: Device) -> Element {
 
 #[component]
 pub fn DeviceDetail(id: i64) -> Element {
-    let device = use_server_future(move || get_device_by_id(id))?;
-    let screen = use_server_future(move || get_screen_preview(id))?;
-    let logs = use_server_future(move || get_device_logs(id))?;
+    let device = use_resource(move || async move { get_device_by_id(id).await });
+    let logs = use_resource(move || async move { get_device_logs(id).await });
+    let mut selected_template_id: Signal<Option<i64>> = use_signal(|| None);
+
+    // Initialize selected_template_id from device data when it first loads
+    use_effect(move || {
+        if let Some(Ok(ref d)) = device() {
+            if selected_template_id().is_none() {
+                selected_template_id.set(Some(d.template_id));
+            }
+        }
+    });
+
+    // Screen preview reacts to selected_template_id changes
+    let screen = use_resource(move || {
+        let tid = selected_template_id();
+        async move {
+            match tid {
+                Some(tid) => get_screen_preview_for_template(id, tid).await,
+                None => Ok(String::new()),
+            }
+        }
+    });
 
     rsx! {
         div { class: "mb-6",
@@ -176,14 +196,18 @@ pub fn DeviceDetail(id: i64) -> Element {
                             DetailRow { label: "Registered", value: device.created_at.clone() }
                             DetailRow { label: "Access Token", value: device.access_token.clone() }
                         }
-                        TemplateSelector { device_id: device.id, current_template_id: device.template_id }
+                        TemplateSelector {
+                            device_id: device.id,
+                            current_template_id: device.template_id,
+                            selected_template_id: selected_template_id,
+                        }
                         MaxCompatibilityToggle { device_id: device.id, current_value: device.maximum_compatibility }
                     }
 
                     div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6",
                         h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Screen Preview" }
                         match screen() {
-                            Some(Ok(b64)) => rsx! {
+                            Some(Ok(b64)) if !b64.is_empty() => rsx! {
                                 img {
                                     class: "w-full rounded border border-gray-100",
                                     src: "data:image/bmp;base64,{b64}",
@@ -193,7 +217,7 @@ pub fn DeviceDetail(id: i64) -> Element {
                             Some(Err(e)) => rsx! {
                                 p { class: "text-sm text-red-400", "Error: {e}" }
                             },
-                            None => rsx! {
+                            _ => rsx! {
                                 div { class: "flex flex-col items-center justify-center h-32 gap-3",
                                     div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
                                     p { class: "text-sm text-gray-400", "Loading preview..." }
@@ -356,9 +380,17 @@ fn DetailRow(label: String, value: String) -> Element {
 }
 
 #[component]
-fn TemplateSelector(device_id: i64, current_template_id: i64) -> Element {
-    let templates = use_server_future(move || get_templates())?;
+fn TemplateSelector(
+    device_id: i64,
+    current_template_id: i64,
+    mut selected_template_id: Signal<Option<i64>>,
+) -> Element {
+    let templates = use_resource(move || async move { get_templates().await });
     let mut save_status = use_signal(|| None::<Result<(), String>>);
+    let mut saved_template_id = use_signal(move || current_template_id);
+
+    let effective_id = selected_template_id().unwrap_or(current_template_id);
+    let is_dirty = effective_id != saved_template_id();
 
     rsx! {
         div { class: "mt-4 pt-4 border-t border-gray-100",
@@ -368,25 +400,41 @@ fn TemplateSelector(device_id: i64, current_template_id: i64) -> Element {
                     div { class: "flex items-center gap-3",
                         select {
                             class: "text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-300",
-                            value: "{current_template_id}",
+                            value: "{effective_id}",
                             onchange: move |evt| {
                                 if let Ok(tid) = evt.value().parse::<i64>() {
+                                    selected_template_id.set(Some(tid));
                                     save_status.set(None);
-                                    spawn(async move {
-                                        match update_device_template(device_id, tid).await {
-                                            Ok(()) => save_status.set(Some(Ok(()))),
-                                            Err(e) => save_status.set(Some(Err(e.to_string()))),
-                                        }
-                                    });
                                 }
                             },
                             for t in templates {
                                 option {
                                     value: "{t.id}",
-                                    selected: t.id == current_template_id,
+                                    selected: t.id == effective_id,
                                     "{t.name}"
                                 }
                             }
+                        }
+                        if is_dirty {
+                            button {
+                                class: "px-3 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
+                                onclick: move |_| {
+                                    if let Some(tid) = selected_template_id() {
+                                        save_status.set(None);
+                                        spawn(async move {
+                                            match update_device_template(device_id, tid).await {
+                                                Ok(()) => {
+                                                    saved_template_id.set(tid);
+                                                    save_status.set(Some(Ok(())));
+                                                }
+                                                Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                            }
+                                        });
+                                    }
+                                },
+                                "Save"
+                            }
+                            span { class: "text-sm text-amber-600", "Unsaved changes" }
                         }
                         match save_status() {
                             Some(Ok(())) => rsx! {
