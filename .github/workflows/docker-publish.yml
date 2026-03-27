@@ -11,17 +11,20 @@ env:
 
 jobs:
   build:
-    runs-on: arc-runner-set
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
+        include:
+          - platform: linux/amd64
+            runner: arc-runner-amd64
+          - platform: linux/arm64
+            runner: arc-runner-arm64
+          - platform: linux/arm/v7
+            runner: arc-runner-armv7
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -83,7 +86,7 @@ jobs:
           retention-days: 1
 
   merge:
-    runs-on: arc-runner-set
+    runs-on: arc-runner-amd64
     needs: build
     permissions:
       contents: read
