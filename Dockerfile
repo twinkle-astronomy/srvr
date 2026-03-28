@@ -35,7 +35,7 @@ FROM base AS dev
 RUN cargo install sqlx-cli
 
 FROM base AS build
-RUN cargo binstall -y wasm-bindgen-cli@0.2.108
+RUN cargo binstall -y wasm-bindgen-cli@0.2.115
 COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \
