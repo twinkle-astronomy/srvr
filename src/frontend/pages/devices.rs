@@ -124,8 +124,67 @@ fn DeviceCard(device: Device) -> Element {
 #[component]
 pub fn DeviceDetail(id: i64) -> Element {
     let device = use_resource(move || async move { get_device_by_id(id).await });
-    let logs = use_resource(move || async move { get_device_logs(id).await });
+    let initial_logs = use_resource(move || async move { get_device_logs(id).await });
+    let mut log_entries: Signal<Vec<DeviceLog>> = use_signal(|| vec![]);
+    let mut log_error: Signal<Option<ServerFnError>> = use_signal(|| None);
+    let mut loading_logs = use_signal(|| true);
     let mut selected_template_id: Signal<Option<i64>> = use_signal(|| None);
+
+    // Seed log_entries from the initial fetch
+    use_effect(move || {
+        if let Some(result) = initial_logs() {
+            match result {
+                Ok(logs) => {
+                    log_entries.set(logs);
+                    log_error.set(None);
+                }
+                Err(e) => {
+                    log_error.set(Some(e));
+                }
+            }
+            loading_logs.set(false);
+        }
+    });
+
+    // Subscribe to SSE for live log updates
+    #[cfg(feature = "web")]
+    {
+        use wasm_bindgen::prelude::*;
+
+        let mut event_source: Signal<Option<web_sys::EventSource>> = use_signal(|| None);
+
+        use_effect(move || {
+            let url = format!("/api/devices/{id}/logs/stream");
+            let es = web_sys::EventSource::new(&url).expect("Failed to create EventSource");
+
+            let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+                move |event: web_sys::MessageEvent| {
+                    if let Some(data) = event.data().as_string() {
+                        if let Ok(new_logs) = serde_json::from_str::<Vec<DeviceLog>>(&data) {
+                            let mut entries = log_entries.write();
+                            for log in new_logs {
+                                if !entries.iter().any(|e| e.id == log.id) {
+                                    entries.insert(0, log);
+                                }
+                            }
+                        }
+                    }
+                },
+            );
+
+            es.add_event_listener_with_callback("logs", on_message.as_ref().unchecked_ref())
+                .expect("Failed to add event listener");
+            on_message.forget();
+
+            event_source.set(Some(es));
+        });
+
+        use_drop(move || {
+            if let Some(es) = event_source.peek().as_ref() {
+                es.close();
+            }
+        });
+    }
 
     // Initialize selected_template_id from device data when it first loads
     use_effect(move || {
@@ -226,7 +285,7 @@ pub fn DeviceDetail(id: i64) -> Element {
                         }
                     }
                 }
-                DeviceLogs { logs: logs() }
+                DeviceLogs { entries: log_entries(), error: log_error(), loading: loading_logs() }
             },
             Some(Err(e)) => rsx! {
                 div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center",
@@ -246,84 +305,83 @@ pub fn DeviceDetail(id: i64) -> Element {
 }
 
 #[component]
-fn DeviceLogs(logs: Option<Result<Vec<DeviceLog>, ServerFnError>>) -> Element {
+fn DeviceLogs(entries: Vec<DeviceLog>, error: Option<ServerFnError>, loading: bool) -> Element {
     rsx! {
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-            div { class: "px-6 py-4 border-b border-gray-100",
+            div { class: "px-6 py-4 border-b border-gray-100 flex items-center gap-2",
                 h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider", "Logs" }
+                if !loading {
+                    span { class: "inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse", title: "Live" }
+                }
             }
-            match logs {
-                Some(Ok(entries)) if entries.is_empty() => rsx! {
-                    div { class: "py-12 text-center",
-                        p { class: "text-sm text-gray-400", "No logs received yet" }
-                    }
-                },
-                Some(Ok(entries)) => rsx! {
-                    div { class: "overflow-x-auto",
-                        table { class: "w-full text-xs font-mono",
-                            thead {
-                                tr { class: "border-b border-gray-100 text-left",
-                                    th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Received" }
-                                    th { class: "px-4 py-2 text-gray-400 font-medium", "Message" }
-                                    th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Source" }
-                                    th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Wake" }
-                                    th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "WiFi" }
-                                    th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Battery" }
-                                }
+            if let Some(e) = error {
+                div { class: "px-6 py-2 bg-red-50 border-b border-red-100",
+                    p { class: "text-sm text-red-400", "Error: {e}" }
+                }
+            }
+            if loading {
+                div { class: "flex flex-col items-center justify-center py-12 gap-3",
+                    div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
+                    p { class: "text-sm text-gray-400", "Loading logs..." }
+                }
+            } else if entries.is_empty() {
+                div { class: "py-12 text-center",
+                    p { class: "text-sm text-gray-400", "No logs received yet" }
+                }
+            } else {
+                div { class: "overflow-x-auto",
+                    table { class: "w-full text-xs font-mono",
+                        thead {
+                            tr { class: "border-b border-gray-100 text-left",
+                                th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Received" }
+                                th { class: "px-4 py-2 text-gray-400 font-medium", "Message" }
+                                th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Source" }
+                                th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Wake" }
+                                th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "WiFi" }
+                                th { class: "px-4 py-2 text-gray-400 font-medium whitespace-nowrap", "Battery" }
                             }
-                            tbody {
-                                for log in entries {
-                                    tr { class: "border-b border-gray-50 hover:bg-gray-50 transition-colors",
-                                        td { class: "px-4 py-2 text-gray-400 whitespace-nowrap", "{log.logged_at}" }
-                                        td { class: "px-4 py-2 text-gray-700 max-w-xs truncate",
-                                            match &log.message {
-                                                Some(m) if !m.is_empty() => rsx! { span { title: "{m}", "{m}" } },
-                                                _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
-                                            }
+                        }
+                        tbody {
+                            for log in entries {
+                                tr { class: "border-b border-gray-50 hover:bg-gray-50 transition-colors",
+                                    td { class: "px-4 py-2 text-gray-400 whitespace-nowrap", "{log.logged_at}" }
+                                    td { class: "px-4 py-2 text-gray-700 max-w-xs truncate",
+                                        match &log.message {
+                                            Some(m) if !m.is_empty() => rsx! { span { title: "{m}", "{m}" } },
+                                            _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
                                         }
-                                        td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
-                                            match (&log.source_path, log.source_line) {
-                                                (Some(p), Some(l)) => rsx! { "{p}:{l}" },
-                                                (Some(p), None) => rsx! { "{p}" },
-                                                _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
-                                            }
+                                    }
+                                    td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
+                                        match (&log.source_path, log.source_line) {
+                                            (Some(p), Some(l)) => rsx! { "{p}:{l}" },
+                                            (Some(p), None) => rsx! { "{p}" },
+                                            _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
                                         }
-                                        td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
-                                            match &log.wake_reason {
-                                                Some(r) => rsx! { "{r}" },
-                                                None => rsx! { span { class: "text-gray-300", "\u{2014}" } },
-                                            }
+                                    }
+                                    td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
+                                        match &log.wake_reason {
+                                            Some(r) => rsx! { "{r}" },
+                                            None => rsx! { span { class: "text-gray-300", "\u{2014}" } },
                                         }
-                                        td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
-                                            match (&log.wifi_status, log.wifi_signal) {
-                                                (Some(s), Some(sig)) => rsx! { "{s} ({sig}dBm)" },
-                                                (Some(s), None) => rsx! { "{s}" },
-                                                _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
-                                            }
+                                    }
+                                    td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
+                                        match (&log.wifi_status, log.wifi_signal) {
+                                            (Some(s), Some(sig)) => rsx! { "{s} ({sig}dBm)" },
+                                            (Some(s), None) => rsx! { "{s}" },
+                                            _ => rsx! { span { class: "text-gray-300", "\u{2014}" } },
                                         }
-                                        td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
-                                            match log.battery_voltage {
-                                                Some(v) => rsx! { "{v:.3}V" },
-                                                None => rsx! { span { class: "text-gray-300", "\u{2014}" } },
-                                            }
+                                    }
+                                    td { class: "px-4 py-2 text-gray-500 whitespace-nowrap",
+                                        match log.battery_voltage {
+                                            Some(v) => rsx! { "{v:.3}V" },
+                                            None => rsx! { span { class: "text-gray-300", "\u{2014}" } },
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                },
-                Some(Err(e)) => rsx! {
-                    div { class: "py-8 text-center",
-                        p { class: "text-sm text-red-400", "Error: {e}" }
-                    }
-                },
-                None => rsx! {
-                    div { class: "flex flex-col items-center justify-center py-12 gap-3",
-                        div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
-                        p { class: "text-sm text-gray-400", "Loading logs..." }
-                    }
-                },
+                }
             }
         }
     }

@@ -28,7 +28,7 @@ docker compose exec -it srvr /bin/bash
 For development with automatic reloading on file changes:
 
 ```bash
-dx serve --addr 0.0.0.0
+SERVER_HOST=YOUR_IP:8080 dx serve --addr 0.0.0.0
 ```
 
 The server will start on `http://localhost:8080`

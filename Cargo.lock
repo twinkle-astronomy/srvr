@@ -4896,6 +4896,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tiny-skia",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tower-sessions",
@@ -4903,6 +4904,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "usvg",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

@@ -36,9 +36,12 @@ argon2 = { version = "0.5", features = ["std"], optional = true }
 axum-login = { version = "0.18", optional = true }
 tower-sessions = { version = "0.14", optional = true }
 tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
-web = ["dioxus/web"]
+web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen"]
 server = [
     "dioxus/server",
     "tokio/full",
@@ -66,4 +69,5 @@ server = [
     "dep:axum-login",
     "dep:tower-sessions",
     "dep:tower-sessions-sqlx-store",
+    "dep:tokio-stream",
 ]

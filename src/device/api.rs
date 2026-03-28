@@ -1,12 +1,21 @@
+use std::borrow::Cow;
+use std::convert::Infallible;
+use std::sync::OnceLock;
+
 use axum::{
     Router,
-    extract::{Json, Query},
+    extract::{Json, Path, Query},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
 use chrono::{Local, Timelike, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use tracing::{error, info};
 
@@ -14,8 +23,36 @@ use crate::{
     db::{get_device_id_by_access_token, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
     frontend::server_fns::get_render_context,
-    models::DeviceLogEntry,
+    models::{DeviceLog, DeviceLogEntry},
 };
+
+#[derive(Clone, Debug)]
+struct LogBroadcastMessage {
+    device_id: i64,
+    logs: Vec<DeviceLog>,
+}
+
+static LOG_CHANNEL: OnceLock<broadcast::Sender<LogBroadcastMessage>> = OnceLock::new();
+
+fn log_sender() -> &'static broadcast::Sender<LogBroadcastMessage> {
+    LOG_CHANNEL.get_or_init(|| {
+        let (tx, _rx) = broadcast::channel(256);
+        tx
+    })
+}
+
+fn get_effective_host(headers: &HeaderMap) -> Cow<'_, str> {
+    if let Ok(host) = std::env::var("SERVER_HOST") {
+        return Cow::Owned(host);
+    }
+    Cow::Borrowed(
+        headers
+            .get("x-forwarded-host")
+            .or_else(|| headers.get("host"))
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost:8080"),
+    )
+}
 
 pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
     Router::new()
@@ -23,9 +60,10 @@ pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
+        .route("/api/devices/{id}/logs/stream", get(log_stream_handler))
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct DisplayResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     image_url: Option<String>,
@@ -108,11 +146,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         }
     };
 
-    // Get the host from the request headers to build the correct image URL
-    let host = headers
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:8080");
+    let host = get_effective_host(&headers);
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
@@ -151,9 +185,23 @@ async fn log_handler(headers: HeaderMap, Json(payload): Json<LogRequest>) -> imp
         }
     };
 
+    let log_count = payload.logs.len() as i64;
+
     if let Err(e) = insert_device_logs(device_id, &payload.logs).await {
         error!("Error inserting device logs: {:?}", e);
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    // Best-effort broadcast for SSE subscribers
+    if log_sender().receiver_count() > 0 {
+        match crate::db::get_device_logs(device_id, log_count).await {
+            Ok(logs) => {
+                let _ = log_sender().send(LogBroadcastMessage { device_id, logs });
+            }
+            Err(e) => {
+                tracing::warn!("Failed to query back logs for broadcast: {:?}", e);
+            }
+        }
     }
 
     StatusCode::NO_CONTENT.into_response()
@@ -201,11 +249,7 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
         device.mac_address, device.model, device.friendly_id
     );
 
-    // Get the host from the request headers to build the correct image URL
-    let host = headers
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:8080");
+    let host = get_effective_host(&headers);
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
@@ -247,4 +291,24 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
             (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
         }
     }
+}
+
+// GET /api/devices/:id/logs/stream - SSE stream of new logs for a device
+async fn log_stream_handler(
+    Path(device_id): Path<i64>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = log_sender().subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(msg) if msg.device_id == device_id => {
+            let json = serde_json::to_string(&msg.logs).unwrap_or_default();
+            Some(Ok(Event::default().data(json).event("logs")))
+        }
+        _ => None,
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    )
 }
