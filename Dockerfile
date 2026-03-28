@@ -35,6 +35,9 @@ FROM base AS dev
 RUN cargo install sqlx-cli
 
 FROM base AS build
+USER root
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/* && npm install -g esbuild
+USER dev
 RUN cargo binstall -y wasm-bindgen-cli@0.2.115
 COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
