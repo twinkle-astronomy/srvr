@@ -32,11 +32,24 @@ struct LogBroadcastMessage {
     logs: Vec<DeviceLog>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct DeviceBroadcastMessage {
+    device: crate::models::Device,
+}
+
 static LOG_CHANNEL: OnceLock<broadcast::Sender<LogBroadcastMessage>> = OnceLock::new();
+static DEVICE_CHANNEL: OnceLock<broadcast::Sender<DeviceBroadcastMessage>> = OnceLock::new();
 
 fn log_sender() -> &'static broadcast::Sender<LogBroadcastMessage> {
     LOG_CHANNEL.get_or_init(|| {
         let (tx, _rx) = broadcast::channel(256);
+        tx
+    })
+}
+
+fn device_sender() -> &'static broadcast::Sender<DeviceBroadcastMessage> {
+    DEVICE_CHANNEL.get_or_init(|| {
+        let (tx, _rx) = broadcast::channel(64);
         tx
     })
 }
@@ -61,6 +74,7 @@ pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
         .route("/api/devices/{id}/logs/stream", get(log_stream_handler))
+        .route("/api/devices/stream", get(device_stream_handler))
 }
 
 #[derive(Debug, Serialize)]
@@ -249,6 +263,13 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
         device.mac_address, device.model, device.friendly_id
     );
 
+    // Broadcast new device for SSE subscribers
+    if device_sender().receiver_count() > 0 {
+        let _ = device_sender().send(DeviceBroadcastMessage {
+            device: device.clone(),
+        });
+    }
+
     let host = get_effective_host(&headers);
 
     // Add timestamp for cache busting and device dimensions
@@ -302,6 +323,25 @@ async fn log_stream_handler(
         Ok(msg) if msg.device_id == device_id => {
             let json = serde_json::to_string(&msg.logs).unwrap_or_default();
             Some(Ok(Event::default().data(json).event("logs")))
+        }
+        _ => None,
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    )
+}
+
+// GET /api/devices/stream - SSE stream of newly added devices
+async fn device_stream_handler(
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = device_sender().subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|msg| match msg {
+        Ok(msg) => {
+            let json = serde_json::to_string(&msg.device).unwrap_or_default();
+            Some(Ok(Event::default().data(json).event("device_added")))
         }
         _ => None,
     });

@@ -1,6 +1,6 @@
 # TRMNL eink Display API Server
 
-A Rust-based API server that implements the [TRMNL eink display API](https://trmnl.com/api-docs/index.html) for serving content to TRMNL e-ink displays.
+A Rust-based API server that implements the [TRMNL eink display API](https://trmnl.com/api-docs/index.html) for serving content to [TRMNL](https://trmnl.com/) e-ink displays.
 
 ## Features
 
@@ -43,7 +43,7 @@ Use this docker-compose.yml to spin up a simple instance.
 ```yml
 services:
   srvr:
-    image: ghcr.io/twinkle-astronomy/srvr:0.0.18
+    image: ghcr.io/twinkle-astronomy/srvr:0.1.0
     volumes:
       - srvr-data:/data
     init: true

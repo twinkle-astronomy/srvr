@@ -1,5 +1,5 @@
 {
-  "rust-analyzer.cargo.features": ["server"],
+  "rust-analyzer.cargo.features": ["server", "web"],
   "tailwindCSS.experimental.classRegex": ["class: \"(.*)\""],
   "tailwindCSS.includeLanguages": {
     "rust": "html"

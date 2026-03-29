@@ -1,14 +1,67 @@
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
-    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template,
-    get_templates, update_device_maximum_compatibility, update_device_template,
+    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template, get_templates, update_device_maximum_compatibility, update_device_template
 };
 use crate::models::{Device, DeviceLog};
 
 #[component]
 pub fn Devices() -> Element {
-    let mut devices = use_server_future(move || get_devices())?;
+    let initial_devices = use_resource(move || get_devices());
+    let mut device_list: Signal<Option<Vec<Device>>> = use_signal(|| None);
+
+    // Seed device_list from initial fetch
+    use_effect(move || {
+        if let Some(Ok(devs)) = initial_devices() {
+            if device_list().is_none() {
+                device_list.set(Some(devs));
+            }
+        }
+    });
+
+    // Subscribe to SSE for new device additions
+    #[cfg(feature = "web")]
+    {
+        use wasm_bindgen::prelude::*;
+
+        let mut event_source: Signal<Option<web_sys::EventSource>> = use_signal(|| None);
+
+        use_effect(move || {
+            let es = web_sys::EventSource::new("/api/devices/stream")
+                .expect("Failed to create EventSource");
+
+            let on_device_added = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+                move |event: web_sys::MessageEvent| {
+                    if let Some(data) = event.data().as_string() {
+                        if let Ok(new_device) = serde_json::from_str::<Device>(&data) {
+                            let mut list = device_list.write();
+                            let devs = list.get_or_insert_with(Vec::new);
+                            if !devs.iter().any(|d| d.id == new_device.id) {
+                                devs.push(new_device);
+                            }
+                        }
+                    }
+                },
+            );
+
+            es.add_event_listener_with_callback(
+                "device_added",
+                on_device_added.as_ref().unchecked_ref(),
+            )
+            .expect("Failed to add event listener");
+            on_device_added.forget();
+
+            event_source.set(Some(es));
+        });
+
+        use_drop(move || {
+            if let Some(es) = event_source.peek().as_ref() {
+                es.close();
+            }
+        });
+    }
+
+    let current_devices = device_list();
 
     rsx! {
         div { class: "mb-8 flex items-center justify-between",
@@ -16,15 +69,18 @@ pub fn Devices() -> Element {
                 h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Devices" }
                 p { class: "text-gray-500 mt-1", "Registered TRMNL devices" }
             }
-            button {
-                class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                onclick: move |_| devices.restart(),
-                "Refresh"
-            }
         }
 
-        match devices() {
-            Some(Ok(devices)) if devices.is_empty() => rsx! {
+        match current_devices {
+            None => rsx! {
+                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                    div { class: "flex flex-col items-center justify-center py-12 gap-3",
+                        div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
+                        p { class: "text-sm text-gray-400", "Loading..." }
+                    }
+                }
+            },
+            Some(ref devices) if devices.is_empty() => rsx! {
                 div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
                     div { class: "py-16 text-center",
                         p { class: "text-gray-400 text-lg", "No devices registered yet" }
@@ -35,25 +91,10 @@ pub fn Devices() -> Element {
                     }
                 }
             },
-            Some(Ok(devices)) => rsx! {
+            Some(ref devices) => rsx! {
                 div { class: "grid grid-cols-1 gap-6",
                     for device in devices {
-                        DeviceCard { key: "{device.id}", device: device }
-                    }
-                }
-            },
-            Some(Err(e)) => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "py-16 text-center",
-                        p { class: "text-red-400 text-sm", "Error: {e}" }
-                    }
-                }
-            },
-            None => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "flex flex-col items-center justify-center py-12 gap-3",
-                        div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
-                        p { class: "text-sm text-gray-400", "Loading..." }
+                        DeviceCard { key: "{device.id}", device: device.clone() }
                     }
                 }
             },
