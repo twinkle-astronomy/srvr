@@ -49,7 +49,8 @@ fn main() {
                 .await
                 .expect("Failed to migrate session store");
 
-            let session_layer = tower_sessions::SessionManagerLayer::new(session_store);
+            let session_layer = tower_sessions::SessionManagerLayer::new(session_store)
+                .with_secure(false);
             let auth_backend = crate::auth::Backend;
             let auth_layer =
                 axum_login::AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
