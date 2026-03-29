@@ -111,6 +111,14 @@ pub async fn create_template(name: &str, content: &str) -> Result<Template, sqlx
 }
 
 pub async fn delete_template(id: i64) -> Result<(), sqlx::error::Error> {
+    for http in get_http_sources(id).await? {
+        delete_http_source(http.id.unwrap()).await?;
+    }
+
+    for prom in get_prometheus_queries(id).await? {
+        delete_prometheus_query(prom.id.unwrap()).await?;
+    }
+
     sqlx::query("DELETE FROM templates WHERE id = ?")
         .bind(id)
         .execute(get())
@@ -435,6 +443,29 @@ pub async fn delete_http_source(id: i64) -> Result<(), sqlx::error::Error> {
         .await?;
 
     Ok(())
+}
+
+pub async fn copy_template(source_id: i64) -> Result<Template, sqlx::error::Error> {
+    let source = get_template_by_id(source_id).await?;
+
+    let new_name = format!(
+        "{} (Copy {})",
+        source.name,
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
+    let new_template = create_template(&new_name, &source.content).await?;
+
+    let prom_queries = get_prometheus_queries(source_id).await?;
+    for pq in prom_queries {
+        create_prometheus_query(new_template.id, &pq.name, &pq.addr, &pq.query).await?;
+    }
+
+    let http_sources = get_http_sources(source_id).await?;
+    for hs in http_sources {
+        create_http_source(new_template.id, &hs.name, &hs.url).await?;
+    }
+
+    Ok(new_template)
 }
 
 pub async fn user_count() -> Result<i64, sqlx::error::Error> {

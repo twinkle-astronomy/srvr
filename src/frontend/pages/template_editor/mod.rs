@@ -24,6 +24,10 @@ pub fn TemplateEditor(id: i64) -> Element {
     let mut render_context = use_store(|| None::<RenderContext>);
     let mut selected_device = use_store(|| None::<Device>);
     let render_error = use_store(|| None::<String>);
+    let mut template_id = use_signal(|| id);
+    if template_id() != id {
+        template_id.set(id);
+    }
 
     use_effect(move || match selected_device() {
         None if devices().len() > 0 => selected_device.set(devices().first().cloned()),
@@ -31,6 +35,7 @@ pub fn TemplateEditor(id: i64) -> Element {
     });
 
     use_resource(move || async move {
+        let id = template_id();
         if let Some(selected_device) = selected_device() {
             if let Ok(v) = get_render_context_for_template(selected_device.id, id).await {
                 render_context.set(Some(v));

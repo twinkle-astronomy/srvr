@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::frontend::pages::template_editor::TemplateVariables;
-use crate::frontend::server_fns::{delete_template, save_template};
+use crate::frontend::server_fns::{copy_template, delete_template, save_template};
 use crate::models::{Device, RenderContext, RenderContextStoreExt, TemplateStoreExt};
 
 #[component]
@@ -12,6 +12,7 @@ pub fn TemplateForm(
     preview_error: ReadStore<Option<String>>,
 ) -> Element {
     let mut save_status = use_signal(|| None::<Result<(), String>>);
+    let mut copy_status = use_signal(|| None::<Result<(), String>>);
     let mut delete_confirming = use_signal(|| false);
     let mut delete_error = use_signal(|| None::<String>);
     let nav = use_navigator();
@@ -100,7 +101,37 @@ pub fn TemplateForm(
                     None => rsx! {},
                 }
 
-                div { class: "ml-auto",
+                div { class: "ml-auto flex items-center gap-2",
+                    button {
+                        class: if copy_status().is_none() { "px-3 py-1.5 text-sm text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors" } else { "px-3 py-1.5 text-sm text-gray-400 border border-gray-200 rounded-lg cursor-not-allowed" },
+                        disabled: copy_status().is_some(),
+                        onclick: move |_| {
+                            copy_status.set(Some(Ok(())));
+                            let template_id = render_context.template().id().read().clone();
+                            spawn(async move {
+                                match copy_template(template_id).await {
+                                    Ok(t) => {
+                                        copy_status.set(None);
+                                        nav.replace(super::super::super::Route::TemplateEditor { id: t.id });
+                                    }
+                                    Err(e) => {
+                                        copy_status.set(Some(Err(e.to_string())));
+                                    }
+                                }
+                            });
+                        },
+                        if copy_status().is_some() && copy_status().as_ref().unwrap().is_ok() {
+                            "Copying..."
+                        } else {
+                            "Copy"
+                        }
+                    }
+                    match copy_status() {
+                        Some(Err(e)) => rsx! {
+                            span { class: "text-sm text-red-500", "Error: {e}" }
+                        },
+                        _ => rsx! {},
+                    }
                     if delete_confirming() {
                         div { class: "flex items-center gap-2",
                             span { class: "text-sm text-gray-500", "Delete this template?" }

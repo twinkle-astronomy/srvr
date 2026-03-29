@@ -240,6 +240,13 @@ pub async fn create_template(name: String, content: String) -> Result<Template, 
 }
 
 #[server]
+pub async fn copy_template(id: i64) -> Result<Template, ServerFnError> {
+    crate::db::copy_template(id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to copy template: {:?}", e)))
+}
+
+#[server]
 pub async fn delete_template(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_template(id)
         .await
