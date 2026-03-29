@@ -138,16 +138,28 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
             )
                 .into_response();
         }
-        Err(crate::device::Error::SqlxError(e)) => {
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "status": 500,
-                    "error": format!("{:?}", e)
-                })),
-            )
-                .into_response();
-        }
+        Err(crate::device::Error::SqlxError(e)) => match e {
+            sqlx::Error::RowNotFound => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "status": 403,
+                        "error": "Unauthorized"
+                    })),
+                )
+                    .into_response();
+            }
+            e => {
+                return (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "status": 500,
+                        "error": format!("{:?}", e)
+                    })),
+                )
+                    .into_response();
+            }
+        },
         Err(e) => {
             error!("Error: {:?}", e);
             return (
@@ -335,8 +347,8 @@ async fn log_stream_handler(
 }
 
 // GET /api/devices/stream - SSE stream of newly added devices
-async fn device_stream_handler(
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+async fn device_stream_handler() -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>
+{
     let rx = device_sender().subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|msg| match msg {
         Ok(msg) => {

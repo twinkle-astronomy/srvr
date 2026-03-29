@@ -508,7 +508,9 @@ pub async fn save_http_source(source: HttpSource) -> Result<HttpSource, ServerFn
         Some(id) => {
             crate::db::update_http_source(id, &source.name, &source.url)
                 .await
-                .map_err(|e| ServerFnError::new(format!("Unable to update http source: {:?}", e)))?;
+                .map_err(|e| {
+                    ServerFnError::new(format!("Unable to update http source: {:?}", e))
+                })?;
             Ok(source)
         }
         None => {

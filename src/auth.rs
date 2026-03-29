@@ -1,8 +1,8 @@
 use axum::{
+    Router,
     extract::Form,
     response::{IntoResponse, Redirect},
     routing::post,
-    Router,
 };
 use axum_login::AuthnBackend;
 use serde::Deserialize;
@@ -61,7 +61,10 @@ impl AuthnBackend for Backend {
         }
     }
 
-    async fn get_user(&self, id: &axum_login::UserId<Self>) -> Result<Option<Self::User>, Self::Error> {
+    async fn get_user(
+        &self,
+        id: &axum_login::UserId<Self>,
+    ) -> Result<Option<Self::User>, Self::Error> {
         crate::db::get_user_by_id(*id).await
     }
 }
@@ -69,8 +72,8 @@ impl AuthnBackend for Backend {
 pub type AuthSession = axum_login::AuthSession<Backend>;
 
 fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
-    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
     use argon2::password_hash::rand_core::OsRng;
+    use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default().hash_password(password.as_bytes(), &salt)?;
@@ -152,10 +155,7 @@ struct ChangePassword {
     new_password: String,
 }
 
-async fn change_password(
-    auth: AuthSession,
-    Form(form): Form<ChangePassword>,
-) -> impl IntoResponse {
+async fn change_password(auth: AuthSession, Form(form): Form<ChangePassword>) -> impl IntoResponse {
     let Some(user) = auth.user else {
         return Redirect::to("/login").into_response();
     };

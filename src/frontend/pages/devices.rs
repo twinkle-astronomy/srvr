@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{
-    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template, get_templates, update_device_maximum_compatibility, update_device_template
+    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template,
+    get_templates, update_device_maximum_compatibility, update_device_template,
 };
 use crate::models::{Device, DeviceLog};
 

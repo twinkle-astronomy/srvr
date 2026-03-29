@@ -6,7 +6,9 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::models::{Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, Template, User};
+use crate::models::{
+    Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, Template, User,
+};
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -386,9 +388,7 @@ pub async fn get_prometheus_queries(
     .await
 }
 
-pub async fn get_http_sources(
-    template_id: i64,
-) -> Result<Vec<HttpSource>, sqlx::error::Error> {
+pub async fn get_http_sources(template_id: i64) -> Result<Vec<HttpSource>, sqlx::error::Error> {
     sqlx::query_as(
         "SELECT id, template_id, name, url, created_at, updated_at \
          FROM http_sources
@@ -419,11 +419,7 @@ pub async fn create_http_source(
     HttpSource::from_row(&r)
 }
 
-pub async fn update_http_source(
-    id: i64,
-    name: &str,
-    url: &str,
-) -> Result<(), sqlx::error::Error> {
+pub async fn update_http_source(id: i64, name: &str, url: &str) -> Result<(), sqlx::error::Error> {
     sqlx::query(
         "UPDATE http_sources SET name = ?, url = ?, updated_at = datetime('now') WHERE id = ?",
     )
@@ -493,10 +489,7 @@ pub async fn get_user_by_username(username: &str) -> Result<Option<User>, sqlx::
     .await
 }
 
-pub async fn create_user(
-    username: &str,
-    password_hash: &str,
-) -> Result<User, sqlx::error::Error> {
+pub async fn create_user(username: &str, password_hash: &str) -> Result<User, sqlx::error::Error> {
     let row: SqliteRow = sqlx::query(
         "INSERT INTO users (username, password_hash, created_at, updated_at) \
          VALUES (?, ?, datetime('now'), datetime('now')) \
@@ -518,10 +511,7 @@ pub async fn get_users() -> Result<Vec<User>, sqlx::error::Error> {
     .await
 }
 
-pub async fn update_user_password(
-    id: i64,
-    password_hash: &str,
-) -> Result<(), sqlx::error::Error> {
+pub async fn update_user_password(id: i64, password_hash: &str) -> Result<(), sqlx::error::Error> {
     sqlx::query("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
         .bind(password_hash)
         .bind(id)
