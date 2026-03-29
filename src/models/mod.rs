@@ -71,6 +71,7 @@ pub struct RenderContext {
     pub device: Device,
     pub template: Template,
     pub prometheus_queries: Vec<PrometheusQuery>,
+    pub http_sources: Vec<HttpSource>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -84,6 +85,37 @@ pub struct PrometheusQueryResult {
 pub struct PrometheusMetricResult {
     pub labels: HashMap<String, String>,
     pub value: f64,
+}
+
+#[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HttpSource {
+    pub id: Option<i64>,
+    pub name: String,
+    pub template_id: i64,
+    pub url: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl HttpSource {
+    pub fn new(template_id: i64) -> Self {
+        Self {
+            id: None,
+            template_id,
+            name: "".to_string(),
+            url: "".to_string(),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct HttpSourceResult {
+    pub source_name: String,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
 }
 
 #[cfg_attr(feature = "server", derive(FromRow))]

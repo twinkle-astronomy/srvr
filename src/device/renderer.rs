@@ -20,6 +20,8 @@ pub enum Error {
     PrometheusError(#[from] prometheus_http_query::error::Error),
     #[error("{0}")]
     TzError(#[from] chrono_tz::ParseError),
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
 }
 
 pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error> {
@@ -34,6 +36,16 @@ pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error
         }
     }
 
+    let http_sources = &render_context.http_sources;
+    let mut http_data: HashMap<String, liquid::model::Value> =
+        HashMap::with_capacity(http_sources.len());
+
+    for source in http_sources {
+        if let Ok(obj) = source.get_render_obj().await {
+            http_data.insert(source.name.clone(), obj);
+        }
+    }
+
     let tz: Tz = std::env::var("TZ").unwrap_or("UTC".to_string()).parse()?;
 
     let utc_now: DateTime<Utc> = Utc::now();
@@ -45,6 +57,7 @@ pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error
         "timezone": time_in_tz.format("%Z").to_string(),
         "date": time_in_tz.format("%Y-%m-%d").to_string(),
         "prometheus": liquid::object!(prometheus_data),
+        "http": liquid::object!(http_data),
     }))
 }
 

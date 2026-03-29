@@ -6,7 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
 };
 
-use crate::models::{Device, DeviceLog, DeviceLogEntry, PrometheusQuery, Template, User};
+use crate::models::{Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, Template, User};
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -376,6 +376,65 @@ pub async fn get_prometheus_queries(
     .bind(template_id)
     .fetch_all(get())
     .await
+}
+
+pub async fn get_http_sources(
+    template_id: i64,
+) -> Result<Vec<HttpSource>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, template_id, name, url, created_at, updated_at \
+         FROM http_sources
+         WHERE template_id = ?
+         ORDER BY name",
+    )
+    .bind(template_id)
+    .fetch_all(get())
+    .await
+}
+
+pub async fn create_http_source(
+    template_id: i64,
+    name: &str,
+    url: &str,
+) -> Result<HttpSource, sqlx::error::Error> {
+    let r = sqlx::query(
+        "INSERT INTO http_sources (template_id, name, url, created_at, updated_at) \
+         VALUES (?, ?, ?, datetime('now'), datetime('now'))
+         RETURNING *",
+    )
+    .bind(template_id)
+    .bind(name)
+    .bind(url)
+    .fetch_one(get())
+    .await?;
+
+    HttpSource::from_row(&r)
+}
+
+pub async fn update_http_source(
+    id: i64,
+    name: &str,
+    url: &str,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query(
+        "UPDATE http_sources SET name = ?, url = ?, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(name)
+    .bind(url)
+    .bind(id)
+    .execute(get())
+    .await?;
+
+    Ok(())
+}
+
+pub async fn delete_http_source(id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM http_sources WHERE id = ?")
+        .bind(id)
+        .execute(get())
+        .await?;
+
+    Ok(())
 }
 
 pub async fn user_count() -> Result<i64, sqlx::error::Error> {

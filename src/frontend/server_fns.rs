@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    AuthenticatedUser, Device, DeviceLog, PrometheusQuery, PrometheusQueryResult, RenderContext,
-    Template,
+    AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
+    PrometheusQueryResult, RenderContext, Template,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -293,10 +293,15 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
+    let http_sources = crate::db::get_http_sources(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
     Ok(RenderContext {
         device,
         template,
         prometheus_queries,
+        http_sources,
     })
 }
 
@@ -317,10 +322,15 @@ pub async fn get_render_context_for_template(
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
+    let http_sources = crate::db::get_http_sources(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
     Ok(RenderContext {
         device,
         template,
         prometheus_queries,
+        http_sources,
     })
 }
 
@@ -483,6 +493,64 @@ pub async fn execute_prometheus_queries(
     }
 
     Ok(results)
+}
+
+#[server]
+pub async fn save_http_source(source: HttpSource) -> Result<HttpSource, ServerFnError> {
+    match source.id {
+        Some(id) => {
+            crate::db::update_http_source(id, &source.name, &source.url)
+                .await
+                .map_err(|e| ServerFnError::new(format!("Unable to update http source: {:?}", e)))?;
+            Ok(source)
+        }
+        None => {
+            let f = crate::db::create_http_source(source.template_id, &source.name, &source.url)
+                .await
+                .map_err(|e| {
+                    ServerFnError::new(format!("Unable to create http source: {:?}", e))
+                })?;
+            Ok(f)
+        }
+    }
+}
+
+#[server]
+pub async fn delete_http_source(id: i64) -> Result<(), ServerFnError> {
+    crate::db::delete_http_source(id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to delete http source: {:?}", e)))
+}
+
+#[server]
+pub async fn execute_http_source(source: HttpSource) -> Result<HttpSourceResult, ServerFnError> {
+    use crate::models::server::http_client;
+
+    let response = http_client()
+        .get(&source.url)
+        .header("Accept", "application/json")
+        .send()
+        .await;
+
+    match response {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(data) => Ok(HttpSourceResult {
+                source_name: source.name,
+                data: Some(data),
+                error: None,
+            }),
+            Err(e) => Ok(HttpSourceResult {
+                source_name: source.name,
+                data: None,
+                error: Some(format!("Failed to parse JSON: {e}")),
+            }),
+        },
+        Err(e) => Ok(HttpSourceResult {
+            source_name: source.name,
+            data: None,
+            error: Some(e.to_string()),
+        }),
+    }
 }
 
 #[server]

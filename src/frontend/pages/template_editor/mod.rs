@@ -9,6 +9,9 @@ use template_preview::TemplatePreview;
 pub mod prometheus_queries;
 use prometheus_queries::PrometheusQueries;
 
+pub mod http_sources;
+use http_sources::HttpSources;
+
 pub mod template_variables;
 use template_variables::TemplateVariables;
 
@@ -71,6 +74,7 @@ pub fn TemplateEditor(id: i64) -> Element {
             }
 
             PrometheusQueries { queries: render_context.prometheus_queries(), template: render_context.template() }
+            HttpSources { sources: render_context.http_sources(), template: render_context.template() }
 
         }
 
