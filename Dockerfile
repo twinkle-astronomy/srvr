@@ -70,4 +70,4 @@ WORKDIR /dist
 ENV IP=0.0.0.0
 ENV PORT=8080
 
-CMD ["/dist/srvr"]
+CMD ["/dist/server"]
