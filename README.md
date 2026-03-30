@@ -49,6 +49,7 @@ services:
     init: true
     ports:
       - "80:8080"
+      # - "443:443"
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
