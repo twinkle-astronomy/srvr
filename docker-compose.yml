@@ -22,7 +22,7 @@ services:
       "sleep infinity"
   srvr-published:
     profiles: ["published"]
-    image: ghcr.io/twinkle-astronomy/srvr:0.1.3
+    image: ghcr.io/twinkle-astronomy/srvr:0.1.4
     build:
       context: .
       dockerfile: Dockerfile
