@@ -39,6 +39,7 @@ struct DeviceBroadcastMessage {
 
 static LOG_CHANNEL: OnceLock<broadcast::Sender<LogBroadcastMessage>> = OnceLock::new();
 static DEVICE_CHANNEL: OnceLock<broadcast::Sender<DeviceBroadcastMessage>> = OnceLock::new();
+static TLS_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn log_sender() -> &'static broadcast::Sender<LogBroadcastMessage> {
     LOG_CHANNEL.get_or_init(|| {
@@ -67,7 +68,8 @@ fn get_effective_host(headers: &HeaderMap) -> Cow<'_, str> {
     )
 }
 
-pub fn router<T: Clone + Send + Sync + 'static>() -> Router<T> {
+pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> {
+    TLS_ENABLED.get_or_init(|| tls_enabled);
     Router::new()
         .route("/api/display", get(display_handler))
         .route("/api/log", post(log_handler))
@@ -138,28 +140,32 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
             )
                 .into_response();
         }
-        Err(crate::device::Error::SqlxError(e)) => match e {
-            sqlx::Error::RowNotFound => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({
-                        "status": 403,
-                        "error": "Unauthorized"
-                    })),
-                )
-                    .into_response();
+        Err(crate::device::Error::SqlxError(e)) => {
+            error!("Error: {:?}", e);
+            match e {
+                sqlx::Error::RowNotFound => {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({
+                            "status": 403,
+                            "error": "Unauthorized"
+                        })),
+                    )
+                        .into_response();
+                }
+                e => {
+                    error!("Error: {:?}", e);
+                    return (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "status": 500,
+                            "error": format!("{:?}", e)
+                        })),
+                    )
+                        .into_response();
+                }
             }
-            e => {
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::json!({
-                        "status": 500,
-                        "error": format!("{:?}", e)
-                    })),
-                )
-                    .into_response();
-            }
-        },
+        }
         Err(e) => {
             error!("Error: {:?}", e);
             return (
@@ -176,11 +182,15 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
+    let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
+        "https"
+    } else {
+        "http"
+    };
     let image_url = format!(
-        "http://{}/render/screen.bmp?device_id={}&t={}",
-        host, device.id, timestamp
+        "{}://{}/render/screen.bmp?device_id={}&t={}",
+        scheme, host, device.id, timestamp
     );
-
     let response = DisplayResponse {
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
@@ -286,9 +296,14 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
 
     // Add timestamp for cache busting and device dimensions
     let timestamp = Utc::now().timestamp();
+    let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
+        "https"
+    } else {
+        "http"
+    };
     let image_url = format!(
-        "http://{}/render/screen.bmp?device_id={}&t={}",
-        host, device.id, timestamp
+        "{}://{}/render/screen.bmp?device_id={}&t={}",
+        scheme, host, device.id, timestamp
     );
 
     let response = SetupResponse {

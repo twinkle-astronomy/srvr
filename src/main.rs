@@ -6,6 +6,63 @@ mod db;
 mod device;
 mod frontend;
 mod models;
+#[cfg(feature = "server")]
+mod tls;
+
+#[cfg(feature = "server")]
+async fn build_router(tls_enabled: bool) -> axum::Router {
+    use axum::routing::get;
+    use axum_prometheus::PrometheusMetricLayer;
+    use tower_http::{
+        cors::{Any, CorsLayer},
+        trace::TraceLayer,
+    };
+
+    // Initialize database and run migrations
+    let db = crate::db::init().await;
+    sqlx::migrate!()
+        .run(db)
+        .await
+        .expect("Failed to run database migrations");
+    tracing::info!("Database initialized and migrations applied");
+
+    // Session store for auth
+    let session_store = tower_sessions_sqlx_store::SqliteStore::new(db.clone());
+    session_store
+        .migrate()
+        .await
+        .expect("Failed to migrate session store");
+
+    let session_layer = tower_sessions::SessionManagerLayer::new(session_store)
+        .with_secure(tls_enabled);
+    let auth_backend = crate::auth::Backend;
+    let auth_layer =
+        axum_login::AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
+
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+    let device_api = crate::device::api::router(tls_enabled);
+    let auth_api = crate::auth::router();
+
+    dioxus::server::router(frontend::App)
+        .route(
+            "/metrics",
+            get(move || async move { metric_handle.render() }),
+        )
+        .route_layer(axum::middleware::from_fn(
+            crate::auth::server_fn_auth_middleware,
+        ))
+        .merge(device_api)
+        .merge(auth_api)
+        .layer(auth_layer)
+        .layer(TraceLayer::new_for_http())
+        .layer(prometheus_layer)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+}
 
 fn main() {
     #[cfg(feature = "server")]
@@ -26,61 +83,37 @@ fn main() {
             )
             .init();
 
-        dioxus::serve(|| async move {
-            use axum::routing::get;
-            use axum_prometheus::PrometheusMetricLayer;
-            use tower_http::{
-                cors::{Any, CorsLayer},
-                trace::TraceLayer,
-            };
+        let tls_mode = crate::tls::TlsMode::from_env();
 
-            // Initialize database and run migrations
-            let db = crate::db::init().await;
-            sqlx::migrate!()
-                .run(db)
-                .await
-                .expect("Failed to run database migrations");
-            tracing::info!("Database initialized and migrations applied");
-
-            // Session store for auth
-            let session_store = tower_sessions_sqlx_store::SqliteStore::new(db.clone());
-            session_store
-                .migrate()
-                .await
-                .expect("Failed to migrate session store");
-
-            let session_layer = tower_sessions::SessionManagerLayer::new(session_store)
-                .with_secure(false);
-            let auth_backend = crate::auth::Backend;
-            let auth_layer =
-                axum_login::AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
-
-            let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-            let device_api = crate::device::api::router();
-            let auth_api = crate::auth::router();
-
-            let router = dioxus::server::router(frontend::App)
-                .route(
-                    "/metrics",
-                    get(move || async move { metric_handle.render() }),
-                )
-                .route_layer(axum::middleware::from_fn(
-                    crate::auth::server_fn_auth_middleware,
-                ))
-                .merge(device_api)
-                .merge(auth_api)
-                .layer(auth_layer)
-                .layer(TraceLayer::new_for_http())
-                .layer(prometheus_layer)
-                .layer(
-                    CorsLayer::new()
-                        .allow_origin(Any)
-                        .allow_methods(Any)
-                        .allow_headers(Any),
-                );
-
-            Ok(router)
-        });
+        match tls_mode {
+            crate::tls::TlsMode::Disabled => {
+                dioxus::serve(|| async move { Ok(build_router(false).await) });
+            }
+            crate::tls::TlsMode::Manual {
+                cert_path,
+                key_path,
+            } => {
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        let router = build_router(true).await;
+                        crate::tls::serve_manual_tls(router, &cert_path, &key_path).await;
+                    });
+            }
+            crate::tls::TlsMode::Acme {
+                domains,
+                email,
+                cache_dir,
+                production,
+            } => {
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(async {
+                        let router = build_router(true).await;
+                        crate::tls::serve_acme(router, domains, email, cache_dir, production).await;
+                    });
+            }
+        }
     }
     #[cfg(not(feature = "server"))]
     dioxus::launch(frontend::App);
