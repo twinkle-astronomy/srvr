@@ -13,6 +13,7 @@ services:
       - .:/app
     ports:
       - "8080:8080"
+      - "443:443"
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///app/.data/data.db
@@ -31,13 +32,25 @@ services:
         GID: ${GID:-1000}
     volumes:
       - srvr-data:/data
+      # - ./certs:/certs:ro  # Mount certificate directory for manual TLS
     init: true
     ports:
       - "80:8080"
+      - "443:443"
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
       - TZ=America/Los_Angeles
+      ## Manual TLS — provide cert and key files:
+      # - TLS_CERT_PATH=/certs/fullchain.pem
+      # - TLS_KEY_PATH=/certs/privkey.pem
+      ## ACME / Let's Encrypt — automatic certificate management:
+      # - ACME_DOMAIN=example.com
+      # - ACME_EMAIL=admin@example.com
+      # - ACME_CACHE_DIR=/data/acme
+      # - ACME_STAGING=true
+      ## Shared TLS settings:
+      # - HTTPS_PORT=443
 
   prometheus:
     image: prom/prometheus:latest
