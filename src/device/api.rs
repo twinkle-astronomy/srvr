@@ -69,12 +69,19 @@ fn get_effective_host(headers: &HeaderMap) -> Cow<'_, str> {
 }
 
 pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> {
+    use std::time::Duration;
+    use tower_http::timeout::TimeoutLayer;
+
     TLS_ENABLED.get_or_init(|| tls_enabled);
-    Router::new()
+    let device_routes = Router::new()
         .route("/api/display", get(display_handler))
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
+        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+
+    Router::new()
+        .merge(device_routes)
         .route("/api/devices/{id}/logs/stream", get(log_stream_handler))
         .route("/api/devices/stream", get(device_stream_handler))
 }
@@ -198,7 +205,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
         update_firmware: false,
         maximum_compatibility: device.maximum_compatibility,
     };
-
+    info!("Response: {:?}", response);
     (StatusCode::OK, Json(response)).into_response()
 }
 

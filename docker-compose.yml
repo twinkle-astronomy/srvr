@@ -22,6 +22,10 @@ services:
       "sleep infinity"
   srvr-published:
     profiles: ["published"]
+    sysctls:
+      net.ipv4.tcp_keepalive_time: 60
+      net.ipv4.tcp_keepalive_intvl: 10
+      net.ipv4.tcp_keepalive_probes: 6
     image: ghcr.io/twinkle-astronomy/srvr:0.1.4
     build:
       context: .
