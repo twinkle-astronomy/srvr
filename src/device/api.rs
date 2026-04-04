@@ -4,10 +4,11 @@ use std::sync::OnceLock;
 
 use axum::{
     Router,
-    extract::{Json, Path, Query},
+    extract::{Json, Path, Query, Request},
     http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{
-        IntoResponse,
+        IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
     routing::{get, post},
@@ -68,6 +69,15 @@ fn get_effective_host(headers: &HeaderMap) -> Cow<'_, str> {
     )
 }
 
+async fn connection_close(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        axum::http::header::CONNECTION,
+        axum::http::HeaderValue::from_static("close"),
+    );
+    res
+}
+
 pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> {
     use std::time::Duration;
     use tower_http::timeout::TimeoutLayer;
@@ -78,7 +88,8 @@ pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> 
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(middleware::from_fn(connection_close));
 
     Router::new()
         .merge(device_routes)
