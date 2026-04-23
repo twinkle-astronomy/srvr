@@ -47,6 +47,7 @@ RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
 
 FROM debian:trixie-slim AS publish
 RUN apt-get update && apt-get install -y \
+    ca-certificates \ 
     fonts-dejavu \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
