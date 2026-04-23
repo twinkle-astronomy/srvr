@@ -43,7 +43,7 @@ Use this docker-compose.yml to spin up a simple instance.
 ```yml
 services:
   srvr:
-    image: ghcr.io/twinkle-astronomy/srvr:0.1.6
+    image: ghcr.io/twinkle-astronomy/srvr:0.1.8
     volumes:
       - srvr-data:/data
     init: true
