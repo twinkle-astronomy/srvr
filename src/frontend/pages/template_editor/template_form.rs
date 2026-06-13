@@ -1,16 +1,17 @@
 use dioxus::prelude::*;
 
 use crate::frontend::pages::template_editor::TemplateVariables;
-use crate::frontend::server_fns::{copy_template, delete_template, save_template};
-use crate::models::{Device, RenderContext, RenderContextStoreExt, TemplateStoreExt};
+use crate::frontend::store::AppStore;
+use crate::models::{RenderContext, RenderContextStoreExt, TemplateStoreExt};
 
 #[component]
 pub fn TemplateForm(
     mut render_context: WriteStore<RenderContext>,
-    devices: ReadStore<Vec<Device>>,
-    mut selected_device: WriteStore<Option<Device>>,
+    mut selected_device: WriteStore<Option<crate::models::Device>>,
     preview_error: ReadStore<Option<String>>,
 ) -> Element {
+    let store = use_context::<AppStore>();
+    let devices = store.devices;
     let mut save_status = use_signal(|| None::<Result<(), String>>);
     let mut copy_status = use_signal(|| None::<Result<(), String>>);
     let mut delete_confirming = use_signal(|| false);
@@ -72,12 +73,11 @@ pub fn TemplateForm(
                     class: "inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition-colors",
                     onclick: move |_| {
                         save_status.set(None);
+                        let id = render_context.template().id().read().clone();
+                        let name = render_context.template().name().read().clone();
+                        let content = render_context.template().content().read().clone();
                         spawn(async move {
-                            match save_template(
-                                render_context.template().id().read().clone(),
-                                render_context.template().name().read().clone(),
-                                render_context.template().content().read().clone(),
-                            ).await {
+                            match store.save_template(id, name, content).await {
                                 Ok(()) => save_status.set(Some(Ok(()))),
                                 Err(e) => save_status.set(Some(Err(e.to_string()))),
                             }
@@ -109,7 +109,7 @@ pub fn TemplateForm(
                             copy_status.set(Some(Ok(())));
                             let template_id = render_context.template().id().read().clone();
                             spawn(async move {
-                                match copy_template(template_id).await {
+                                match store.copy_template(template_id).await {
                                     Ok(t) => {
                                         copy_status.set(None);
                                         nav.replace(super::super::super::Route::TemplateEditor { id: t.id });
@@ -141,7 +141,7 @@ pub fn TemplateForm(
                                     delete_error.set(None);
                                     let template_id = render_context.template().id().read().clone();
                                     spawn(async move {
-                                        match delete_template(template_id).await {
+                                        match store.delete_template(template_id).await {
                                             Ok(()) => {
                                                 nav.push(super::super::super::Route::Templates {});
                                             }

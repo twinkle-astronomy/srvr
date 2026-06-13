@@ -1,11 +1,12 @@
 mod components;
 mod pages;
 pub mod server_fns;
+pub mod store;
 
 use dioxus::prelude::*;
 
 use pages::{Dashboard, DeviceDetail, Devices, Login, Setup, TemplateEditor, Templates, Users};
-use server_fns::{check_auth, check_needs_setup};
+use store::AppStore;
 
 #[derive(Routable, Clone, PartialEq, Debug)]
 #[rustfmt::skip]
@@ -42,30 +43,25 @@ pub fn App() -> Element {
 
 #[component]
 fn NavLayout() -> Element {
-    let auth = use_server_future(move || check_auth())?;
-    let needs_setup = use_server_future(move || check_needs_setup())?;
+    let store = use_context_provider(|| AppStore::new());
     let nav = navigator();
 
-    match (needs_setup(), auth()) {
-        (Some(Ok(true)), _) => {
-            nav.push(Route::Setup {});
-            return rsx! {
-                p { class: "text-gray-400 text-center mt-20", "Redirecting to setup..." }
-            };
-        }
-        (_, Some(Ok(None))) => {
-            nav.push(Route::Login {});
-            return rsx! {
-                p { class: "text-gray-400 text-center mt-20", "Redirecting to login..." }
-            };
-        }
-        (_, Some(Ok(Some(_)))) => {}
-        (Some(Err(e)), _) | (_, Some(Err(e))) => {
-            return rsx! {
-                p { class: "text-red-400 text-center mt-20", "Error: {e}" }
-            };
-        }
-        _ => {
+    use_effect(move || {
+        spawn(store.fetch_needs_setup());
+        spawn(store.fetch_current_user());
+        spawn(store.fetch_devices());
+        spawn(store.fetch_templates());
+        spawn(store.fetch_users());
+        spawn(store.fetch_server_info());
+    });
+
+    let needs_setup = store.needs_setup;
+    let current_user = store.current_user;
+    let current_user_loaded = store.current_user_loaded;
+
+    match (needs_setup(), current_user_loaded(), current_user()) {
+        // Still fetching auth state
+        (None, _, _) | (_, false, _) => {
             return rsx! {
                 div { class: "flex flex-col items-center justify-center py-32 gap-3",
                     div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
@@ -73,6 +69,22 @@ fn NavLayout() -> Element {
                 }
             };
         }
+        // First-run setup required
+        (Some(true), _, _) => {
+            nav.push(Route::Setup {});
+            return rsx! {
+                p { class: "text-gray-400 text-center mt-20", "Redirecting to setup..." }
+            };
+        }
+        // Not authenticated
+        (_, true, None) => {
+            nav.push(Route::Login {});
+            return rsx! {
+                p { class: "text-gray-400 text-center mt-20", "Redirecting to login..." }
+            };
+        }
+        // Authenticated — fall through
+        _ => {}
     }
 
     rsx! {

@@ -5,10 +5,18 @@ use crate::frontend::server_fns::check_needs_setup;
 
 #[component]
 pub fn Setup() -> Element {
-    let needs_setup = use_server_future(move || check_needs_setup())?;
+    let mut needs_setup = use_signal(|| None::<bool>);
     let nav = navigator();
 
-    if let Some(Ok(false)) = needs_setup() {
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(v) = check_needs_setup().await {
+                needs_setup.set(Some(v));
+            }
+        });
+    });
+
+    if let Some(false) = needs_setup() {
         nav.push(Route::Login {});
         return rsx! { p { class: "text-gray-400 text-center mt-20", "Redirecting to login..." } };
     }

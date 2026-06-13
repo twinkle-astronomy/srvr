@@ -5,15 +5,22 @@ use crate::frontend::server_fns::check_needs_setup;
 
 #[component]
 pub fn Login() -> Element {
-    let needs_setup = use_server_future(move || check_needs_setup())?;
+    let mut needs_setup = use_signal(|| None::<bool>);
     let nav = navigator();
 
-    if let Some(Ok(true)) = needs_setup() {
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(v) = check_needs_setup().await {
+                needs_setup.set(Some(v));
+            }
+        });
+    });
+
+    if let Some(true) = needs_setup() {
         nav.push(Route::Setup {});
         return rsx! { p { class: "text-gray-400 text-center mt-20", "Redirecting to setup..." } };
     }
 
-    // Read error query param from URL
     let error_msg = use_signal(|| None::<&'static str>);
 
     rsx! {
@@ -58,7 +65,7 @@ pub fn Login() -> Element {
                                 autocomplete: "current-password",
                                 class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-300",
                             }
-                        }
+        }
 
                         button {
                             r#type: "submit",

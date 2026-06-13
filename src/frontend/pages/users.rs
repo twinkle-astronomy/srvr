@@ -1,17 +1,16 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{check_auth, delete_user, get_all_users};
+use crate::frontend::store::AppStore;
 use crate::models::AuthenticatedUser;
 
 #[component]
 pub fn Users() -> Element {
-    let mut users = use_server_future(move || get_all_users())?;
-    let current_user = use_server_future(move || check_auth())?;
+    let store = use_context::<AppStore>();
+    let users = store.users;
+    let users_loaded = store.users_loaded;
+    let current_user = store.current_user;
 
-    let current_user_id = match current_user() {
-        Some(Ok(Some(u))) => Some(u.id),
-        _ => None,
-    };
+    let current_user_id = current_user().map(|u| u.id);
 
     rsx! {
         div { class: "mb-8",
@@ -19,7 +18,6 @@ pub fn Users() -> Element {
             p { class: "text-gray-500 mt-1", "Manage user accounts" }
         }
 
-        // Change password form
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
             h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Change Password" }
             form {
@@ -57,7 +55,6 @@ pub fn Users() -> Element {
             }
         }
 
-        // Create user form
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
             h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Create User" }
             form {
@@ -95,39 +92,30 @@ pub fn Users() -> Element {
             }
         }
 
-        // User list
-        match users() {
-            Some(Ok(user_list)) => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100",
-                    div { class: "divide-y divide-gray-100",
-                        for user in user_list {
-                            UserRow {
-                                key: "{user.id}",
-                                user: user.clone(),
-                                is_current: current_user_id == Some(user.id),
-                                on_delete: move |_| async move {
-                                    users.restart();
-                                },
-                            }
+        if !users_loaded() {
+            div { class: "flex flex-col items-center justify-center py-12 gap-3",
+                div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
+                p { class: "text-sm text-gray-400", "Loading..." }
+            }
+        } else {
+            div { class: "bg-white rounded-xl shadow-sm border border-gray-100",
+                div { class: "divide-y divide-gray-100",
+                    for user in users() {
+                        UserRow {
+                            key: "{user.id}",
+                            user: user.clone(),
+                            is_current: current_user_id == Some(user.id),
                         }
                     }
                 }
-            },
-            Some(Err(e)) => rsx! {
-                p { class: "text-red-400 text-sm", "Error loading users: {e}" }
-            },
-            None => rsx! {
-                div { class: "flex flex-col items-center justify-center py-12 gap-3",
-                    div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
-                    p { class: "text-sm text-gray-400", "Loading..." }
-                }
-            },
+            }
         }
     }
 }
 
 #[component]
-fn UserRow(user: AuthenticatedUser, is_current: bool, on_delete: EventHandler) -> Element {
+fn UserRow(user: AuthenticatedUser, is_current: bool) -> Element {
+    let store = use_context::<AppStore>();
     let mut deleting = use_signal(|| false);
     let user_id = user.id;
 
@@ -152,8 +140,8 @@ fn UserRow(user: AuthenticatedUser, is_current: bool, on_delete: EventHandler) -
                     disabled: deleting(),
                     onclick: move |_| async move {
                         deleting.set(true);
-                        if let Ok(()) = delete_user(user_id).await {
-                            on_delete.call(());
+                        if let Err(e) = store.delete_user(user_id).await {
+                            tracing::error!("Failed to delete user: {e}");
                         }
                         deleting.set(false);
                     },

@@ -1,10 +1,11 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::get_server_info;
+use crate::frontend::store::AppStore;
 
 #[component]
 pub fn Dashboard() -> Element {
-    let server_info = use_server_future(move || get_server_info())?;
+    let store = use_context::<AppStore>();
+    let server_info = store.server_info;
 
     rsx! {
         div { class: "mb-8",
@@ -13,11 +14,10 @@ pub fn Dashboard() -> Element {
         }
 
         div { class: "grid grid-cols-1 md:grid-cols-2 gap-6",
-            // Server info card
             div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6",
                 h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Server Info" }
                 match server_info() {
-                    Some(Ok(info)) => rsx! {
+                    Some(info) => rsx! {
                         div { class: "space-y-3",
                             InfoRow { label: "Status",
                                 div { class: "flex items-center gap-2",
@@ -38,9 +38,6 @@ pub fn Dashboard() -> Element {
                                 span { class: "text-sm text-gray-700 font-mono text-xs", "{info.prometheus_url}" }
                             }
                         }
-                    },
-                    Some(Err(e)) => rsx! {
-                        p { class: "text-red-400 text-sm", "Error: {e}" }
                     },
                     None => rsx! { LoadingSpinner {} },
                 }

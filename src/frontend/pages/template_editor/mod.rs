@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{get_devices, get_render_context_for_template};
+use crate::frontend::server_fns::get_render_context_for_template;
+use crate::frontend::store::AppStore;
 use crate::models::{Device, RenderContext, RenderContextStoreExt};
 
 pub mod template_preview;
@@ -20,7 +21,8 @@ use template_form::TemplateForm;
 
 #[component]
 pub fn TemplateEditor(id: i64) -> Element {
-    let mut devices = use_store(|| vec![]);
+    let store = use_context::<AppStore>();
+    let devices = store.devices;
     let mut render_context = use_store(|| None::<RenderContext>);
     let mut selected_device = use_store(|| None::<Device>);
     let render_error = use_store(|| None::<String>);
@@ -43,15 +45,6 @@ pub fn TemplateEditor(id: i64) -> Element {
         }
     });
 
-    use_resource(move || async move {
-        match get_devices().await {
-            Ok(v) => {
-                devices.set(v);
-            }
-            Err(_) => {}
-        }
-    });
-
     rsx! {
         div { class: "mb-8",
             div { class: "mb-2",
@@ -68,7 +61,6 @@ pub fn TemplateEditor(id: i64) -> Element {
             div { class: "flex flex-wrap items-start gap-6",
                 TemplateForm {
                     render_context,
-                    devices,
                     selected_device,
                     preview_error: render_error,
                 }

@@ -1,26 +1,16 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{
-    delete_device, get_device_by_id, get_device_logs, get_devices, get_screen_preview_for_template,
-    get_templates, update_device_maximum_compatibility, update_device_template,
-};
+use crate::frontend::server_fns::get_screen_preview_for_template;
+use crate::frontend::store::AppStore;
 use crate::models::{Device, DeviceLog};
 
 #[component]
 pub fn Devices() -> Element {
-    let initial_devices = use_resource(move || get_devices());
-    let mut device_list: Signal<Option<Vec<Device>>> = use_signal(|| None);
+    let store = use_context::<AppStore>();
+    let devices = store.devices;
+    let devices_loaded = store.devices_loaded;
 
-    // Seed device_list from initial fetch
-    use_effect(move || {
-        if let Some(Ok(devs)) = initial_devices() {
-            if device_list().is_none() {
-                device_list.set(Some(devs));
-            }
-        }
-    });
-
-    // Subscribe to SSE for new device additions
+    // Subscribe to SSE for new device additions, updating the global store
     #[cfg(feature = "web")]
     {
         use wasm_bindgen::prelude::*;
@@ -35,11 +25,7 @@ pub fn Devices() -> Element {
                 move |event: web_sys::MessageEvent| {
                     if let Some(data) = event.data().as_string() {
                         if let Ok(new_device) = serde_json::from_str::<Device>(&data) {
-                            let mut list = device_list.write();
-                            let devs = list.get_or_insert_with(Vec::new);
-                            if !devs.iter().any(|d| d.id == new_device.id) {
-                                devs.push(new_device);
-                            }
+                            store.upsert_device(new_device);
                         }
                     }
                 },
@@ -62,8 +48,6 @@ pub fn Devices() -> Element {
         });
     }
 
-    let current_devices = device_list();
-
     rsx! {
         div { class: "mb-8 flex items-center justify-between",
             div {
@@ -72,33 +56,29 @@ pub fn Devices() -> Element {
             }
         }
 
-        match current_devices {
-            None => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "flex flex-col items-center justify-center py-12 gap-3",
-                        div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
-                        p { class: "text-sm text-gray-400", "Loading..." }
+        if !devices_loaded() {
+            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                div { class: "flex flex-col items-center justify-center py-12 gap-3",
+                    div { class: "w-6 h-6 border-2 border-gray-200 border-t-gray-900 rounded-full animate-spin" }
+                    p { class: "text-sm text-gray-400", "Loading..." }
+                }
+            }
+        } else if devices().is_empty() {
+            div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
+                div { class: "py-16 text-center",
+                    p { class: "text-gray-400 text-lg", "No devices registered yet" }
+                    p { class: "text-gray-300 text-sm mt-2",
+                        "Devices will appear here after calling "
+                        code { class: "bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono", "GET /api/setup" }
                     }
                 }
-            },
-            Some(ref devices) if devices.is_empty() => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
-                    div { class: "py-16 text-center",
-                        p { class: "text-gray-400 text-lg", "No devices registered yet" }
-                        p { class: "text-gray-300 text-sm mt-2",
-                            "Devices will appear here after calling "
-                            code { class: "bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono", "GET /api/setup" }
-                        }
-                    }
+            }
+        } else {
+            div { class: "grid grid-cols-1 gap-6",
+                for device in devices() {
+                    DeviceCard { key: "{device.id}", device: device.clone() }
                 }
-            },
-            Some(ref devices) => rsx! {
-                div { class: "grid grid-cols-1 gap-6",
-                    for device in devices {
-                        DeviceCard { key: "{device.id}", device: device.clone() }
-                    }
-                }
-            },
+            }
         }
     }
 }
@@ -165,14 +145,18 @@ fn DeviceCard(device: Device) -> Element {
 
 #[component]
 pub fn DeviceDetail(id: i64) -> Element {
-    let device = use_resource(move || async move { get_device_by_id(id).await });
-    let initial_logs = use_resource(move || async move { get_device_logs(id).await });
+    let store = use_context::<AppStore>();
+    let devices = store.devices;
+    let device = use_memo(move || devices().into_iter().find(|d| d.id == id));
+
+    let initial_logs = use_resource(move || async move {
+        crate::frontend::server_fns::get_device_logs(id).await
+    });
     let mut log_entries: Signal<Vec<DeviceLog>> = use_signal(|| vec![]);
     let mut log_error: Signal<Option<ServerFnError>> = use_signal(|| None);
     let mut loading_logs = use_signal(|| true);
     let mut selected_template_id: Signal<Option<i64>> = use_signal(|| None);
 
-    // Seed log_entries from the initial fetch
     use_effect(move || {
         if let Some(result) = initial_logs() {
             match result {
@@ -188,7 +172,6 @@ pub fn DeviceDetail(id: i64) -> Element {
         }
     });
 
-    // Subscribe to SSE for live log updates
     #[cfg(feature = "web")]
     {
         use wasm_bindgen::prelude::*;
@@ -228,16 +211,14 @@ pub fn DeviceDetail(id: i64) -> Element {
         });
     }
 
-    // Initialize selected_template_id from device data when it first loads
     use_effect(move || {
-        if let Some(Ok(ref d)) = device() {
+        if let Some(ref d) = device() {
             if selected_template_id().is_none() {
                 selected_template_id.set(Some(d.template_id));
             }
         }
     });
 
-    // Screen preview reacts to selected_template_id changes
     let screen = use_resource(move || {
         let tid = selected_template_id();
         async move {
@@ -258,7 +239,7 @@ pub fn DeviceDetail(id: i64) -> Element {
         }
 
         match device() {
-            Some(Ok(device)) => rsx! {
+            Some(device) => rsx! {
                 div { class: "mb-8 flex items-start justify-between",
                     div {
                         h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "{device.friendly_id}" }
@@ -328,11 +309,6 @@ pub fn DeviceDetail(id: i64) -> Element {
                     }
                 }
                 DeviceLogs { entries: log_entries(), error: log_error(), loading: loading_logs() }
-            },
-            Some(Err(e)) => rsx! {
-                div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-16 text-center",
-                    p { class: "text-red-400 text-sm", "Error: {e}" }
-                }
             },
             None => rsx! {
                 div { class: "bg-white rounded-xl shadow-sm border border-gray-100",
@@ -431,11 +407,12 @@ fn DeviceLogs(entries: Vec<DeviceLog>, error: Option<ServerFnError>, loading: bo
 
 #[component]
 fn DeleteButton(device_id: i64) -> Element {
+    let store = use_context::<AppStore>();
     let mut confirming = use_signal(|| false);
     let nav = use_navigator();
 
     let handle_delete = move |_| async move {
-        if let Err(e) = delete_device(device_id).await {
+        if let Err(e) = store.delete_device(device_id).await {
             tracing::error!("Failed to delete device: {e}");
         } else {
             nav.push(super::super::Route::Devices {});
@@ -485,7 +462,9 @@ fn TemplateSelector(
     current_template_id: i64,
     mut selected_template_id: Signal<Option<i64>>,
 ) -> Element {
-    let templates = use_resource(move || async move { get_templates().await });
+    let store = use_context::<AppStore>();
+    let templates = store.templates;
+    let templates_loaded = store.templates_loaded;
     let mut save_status = use_signal(|| None::<Result<(), String>>);
     let mut saved_template_id = use_signal(move || current_template_id);
 
@@ -495,64 +474,58 @@ fn TemplateSelector(
     rsx! {
         div { class: "mt-4 pt-4 border-t border-gray-100",
             h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3", "Template" }
-            match templates() {
-                Some(Ok(templates)) => rsx! {
-                    div { class: "flex items-center gap-3",
-                        select {
-                            class: "text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-300",
-                            value: "{effective_id}",
-                            onchange: move |evt| {
-                                if let Ok(tid) = evt.value().parse::<i64>() {
-                                    selected_template_id.set(Some(tid));
-                                    save_status.set(None);
-                                }
-                            },
-                            for t in templates {
-                                option {
-                                    value: "{t.id}",
-                                    selected: t.id == effective_id,
-                                    "{t.name}"
-                                }
+            if templates().is_empty() && !templates_loaded() {
+                p { class: "text-sm text-gray-400", "Loading templates..." }
+            } else {
+                div { class: "flex items-center gap-3",
+                    select {
+                        class: "text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                        value: "{effective_id}",
+                        onchange: move |evt| {
+                            if let Ok(tid) = evt.value().parse::<i64>() {
+                                selected_template_id.set(Some(tid));
+                                save_status.set(None);
                             }
-                        }
-                        if is_dirty {
-                            button {
-                                class: "px-3 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                                onclick: move |_| {
-                                    if let Some(tid) = selected_template_id() {
-                                        save_status.set(None);
-                                        spawn(async move {
-                                            match update_device_template(device_id, tid).await {
-                                                Ok(()) => {
-                                                    saved_template_id.set(tid);
-                                                    save_status.set(Some(Ok(())));
-                                                }
-                                                Err(e) => save_status.set(Some(Err(e.to_string()))),
-                                            }
-                                        });
-                                    }
-                                },
-                                "Save"
+                        },
+                        for t in templates() {
+                            option {
+                                value: "{t.id}",
+                                selected: t.id == effective_id,
+                                "{t.name}"
                             }
-                            span { class: "text-sm text-amber-600", "Unsaved changes" }
-                        }
-                        match save_status() {
-                            Some(Ok(())) => rsx! {
-                                span { class: "text-sm text-green-600", "Saved!" }
-                            },
-                            Some(Err(e)) => rsx! {
-                                span { class: "text-sm text-red-500", "Error: {e}" }
-                            },
-                            None => rsx! {},
                         }
                     }
-                },
-                Some(Err(e)) => rsx! {
-                    p { class: "text-sm text-red-400", "Error loading templates: {e}" }
-                },
-                None => rsx! {
-                    p { class: "text-sm text-gray-400", "Loading templates..." }
-                },
+                    if is_dirty {
+                        button {
+                            class: "px-3 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
+                            onclick: move |_| {
+                                if let Some(tid) = selected_template_id() {
+                                    save_status.set(None);
+                                    spawn(async move {
+                                        match store.update_device_template(device_id, tid).await {
+                                            Ok(()) => {
+                                                saved_template_id.set(tid);
+                                                save_status.set(Some(Ok(())));
+                                            }
+                                            Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                        }
+                                    });
+                                }
+                            },
+                            "Save"
+                        }
+                        span { class: "text-sm text-amber-600", "Unsaved changes" }
+                    }
+                    match save_status() {
+                        Some(Ok(())) => rsx! {
+                            span { class: "text-sm text-green-600", "Saved!" }
+                        },
+                        Some(Err(e)) => rsx! {
+                            span { class: "text-sm text-red-500", "Error: {e}" }
+                        },
+                        None => rsx! {},
+                    }
+                }
             }
         }
     }
@@ -560,6 +533,7 @@ fn TemplateSelector(
 
 #[component]
 fn MaxCompatibilityToggle(device_id: i64, current_value: bool) -> Element {
+    let store = use_context::<AppStore>();
     let mut checked = use_signal(move || current_value);
     let mut save_status = use_signal(|| None::<Result<(), String>>);
 
@@ -577,7 +551,7 @@ fn MaxCompatibilityToggle(device_id: i64, current_value: bool) -> Element {
                             checked.set(val);
                             save_status.set(None);
                             spawn(async move {
-                                match update_device_maximum_compatibility(device_id, val).await {
+                                match store.update_device_maximum_compatibility(device_id, val).await {
                                     Ok(()) => save_status.set(Some(Ok(()))),
                                     Err(e) => save_status.set(Some(Err(e.to_string()))),
                                 }
