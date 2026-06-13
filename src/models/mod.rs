@@ -177,6 +177,25 @@ pub struct AuthenticatedUser {
 }
 
 impl Device {
+    pub fn virtual_device() -> Self {
+        Device {
+            id: 0,
+            access_token: String::new(),
+            mac_address: "00:00:00:00:00:00".to_string(),
+            model: "Virtual".to_string(),
+            friendly_id: "virtual-device".to_string(),
+            fw_version: Some("1.0.0".to_string()),
+            width: 800,
+            height: 480,
+            battery_voltage: Some(3.9),
+            rssi: Some("-65".to_string()),
+            template_id: 0,
+            maximum_compatibility: false,
+            last_seen_at: String::new(),
+            created_at: String::new(),
+        }
+    }
+
     pub fn percent_charged(&self) -> Option<f32> {
         self.battery_voltage.map(|battery_voltage| {
             let pct_charged = (battery_voltage - 3.) / 0.012;

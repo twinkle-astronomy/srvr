@@ -50,7 +50,7 @@ pub fn TemplateForm(
                                 }
                             }
                         } else {
-                            span { class: "text-xs text-gray-400", "No devices" }
+                            span { class: "text-xs text-gray-400", "Virtual Device (800\u{00d7}480)" }
                         }
                     }
                 }

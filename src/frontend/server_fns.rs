@@ -342,6 +342,26 @@ pub async fn get_render_context_for_template(
 }
 
 #[server]
+pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContext, ServerFnError> {
+    let device = Device::virtual_device();
+    let template = crate::db::get_template_by_id(template_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let http_sources = crate::db::get_http_sources(template.id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(RenderContext {
+        device,
+        template,
+        prometheus_queries,
+        http_sources,
+    })
+}
+
+#[server]
 pub async fn get_device_by_id(id: i64) -> Result<Device, ServerFnError> {
     crate::db::get_device(id)
         .await

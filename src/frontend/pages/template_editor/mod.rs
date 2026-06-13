@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::get_render_context_for_template;
+use crate::frontend::server_fns::{get_render_context_for_template, get_virtual_render_context};
 use crate::frontend::store::AppStore;
 use crate::models::{Device, RenderContext, RenderContextStoreExt};
 
@@ -33,13 +33,19 @@ pub fn TemplateEditor(id: i64) -> Element {
 
     use_effect(move || match selected_device() {
         None if devices().len() > 0 => selected_device.set(devices().first().cloned()),
+        None => selected_device.set(Some(Device::virtual_device())),
         _ => {}
     });
 
     use_resource(move || async move {
         let id = template_id();
         if let Some(selected_device) = selected_device() {
-            if let Ok(v) = get_render_context_for_template(selected_device.id, id).await {
+            let result = if selected_device.id == 0 {
+                get_virtual_render_context(id).await
+            } else {
+                get_render_context_for_template(selected_device.id, id).await
+            };
+            if let Ok(v) = result {
                 render_context.set(Some(v));
             }
         }
