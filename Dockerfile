@@ -1,4 +1,4 @@
-FROM rust:1.93-trixie AS base
+FROM rust:1.96-trixie AS base
 
 RUN apt-get update && apt-get install -y \
     curl \
