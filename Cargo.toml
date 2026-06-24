@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ring = "0.17"
 dioxus = { version = "0.7", features = ["fullstack", "router"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -13,7 +14,7 @@ base64 = "0.22"
 
 # Server-only dependencies (not WASM-compatible)
 axum = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["sync", "macros"]}
+tokio = { version = "1", features = ["sync", "macros", "time"] }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
@@ -41,6 +42,11 @@ axum-server = { version = "0.8", features = ["tls-rustls"], optional = true }
 rustls-acme = { version = "0.15", features = ["axum"], optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["client"] }
+http-body-util = "0.1"
 
 [features]
 web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen"]
@@ -75,4 +81,3 @@ server = [
     "dep:axum-server",
     "dep:rustls-acme",
 ]
-

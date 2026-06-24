@@ -3,12 +3,15 @@ mod auth;
 #[cfg(feature = "server")]
 mod db;
 #[cfg(feature = "server")]
-mod device;
+pub(crate) mod device;
 mod frontend;
+#[cfg(feature = "server")]
+pub mod hmac;
 mod models;
 #[cfg(feature = "server")]
+pub mod time;
+#[cfg(feature = "server")]
 mod tls;
-
 #[cfg(feature = "server")]
 async fn build_router(tls_enabled: bool) -> axum::Router {
     use axum::routing::get;

@@ -13,18 +13,22 @@ use axum::{
     },
     routing::{get, post},
 };
-use chrono::{Local, Timelike, Utc};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{Local, Timelike};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use tracing::{error, info};
 
+use crate::time::Clock;
 use crate::{
     db::{get_device_id_by_access_token, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
     frontend::server_fns::get_render_context,
+    hmac::{generate_signature_bytes, validate_signature},
     models::{DeviceLog, DeviceLogEntry},
+    time::RealClock,
 };
 
 #[derive(Clone, Debug)]
@@ -199,16 +203,25 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let host = get_effective_host(&headers);
 
     // Add timestamp for cache busting and device dimensions
-    let timestamp = Utc::now().timestamp();
+    let real_clock = RealClock;
+    let timestamp = real_clock.now_secs();
     let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
         "https"
     } else {
         "http"
     };
+
+    // Generate HMAC signature for the image URL
+    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
+        .expect("IMAGE_SIGNATURE_SECRET must be set");
+    let signed_bytes = generate_signature_bytes(&secret, device.id, real_clock.clone());
+    let sig_encoded = URL_SAFE_NO_PAD.encode(&signed_bytes);
+
     let image_url = format!(
-        "{}://{}/render/screen.bmp?device_id={}&t={}",
-        scheme, host, device.id, timestamp
+        "{}://{}/render/screen.bmp?device_id={}&t={}&sig={}",
+        scheme, host, device.id, timestamp, sig_encoded
     );
+
     let response = DisplayResponse {
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
@@ -313,15 +326,23 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     let host = get_effective_host(&headers);
 
     // Add timestamp for cache busting and device dimensions
-    let timestamp = Utc::now().timestamp();
+    let real_clock = RealClock;
+    let timestamp = real_clock.now_secs();
     let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
         "https"
     } else {
         "http"
     };
+
+    // Generate HMAC signature for the image URL
+    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
+        .expect("IMAGE_SIGNATURE_SECRET must be set");
+    let signed_bytes = generate_signature_bytes(&secret, device.id, real_clock.clone());
+    let sig_encoded = URL_SAFE_NO_PAD.encode(&signed_bytes);
+
     let image_url = format!(
-        "{}://{}/render/screen.bmp?device_id={}&t={}",
-        scheme, host, device.id, timestamp
+        "{}://{}/render/screen.bmp?device_id={}&t={}&sig={}",
+        scheme, host, device.id, timestamp, sig_encoded
     );
 
     let response = SetupResponse {
@@ -338,10 +359,58 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
 #[derive(Deserialize)]
 struct RenderQuery {
     device_id: i64,
+    #[serde(default)]
+    t: Option<i64>,
+    #[serde(default)]
+    sig: Option<String>,
 }
 
-// GET /render/screen.bmp - Render screen image
+// GET /render/screen.bmp - Render screen image with HMAC validation
 async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
+    // Validate HMAC signature
+    let timestamp = match params.t {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Missing timestamp parameter" })),
+            )
+                .into_response();
+        }
+    };
+
+    let signed_bytes = match params.sig {
+        Some(sig) => match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&sig) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": "Invalid signature encoding" })),
+                )
+                    .into_response();
+            }
+        },
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Missing signature parameter" })),
+            )
+                .into_response();
+        }
+    };
+
+    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
+        .expect("IMAGE_SIGNATURE_SECRET must be set");
+
+    let is_valid = validate_signature(&secret, params.device_id, &signed_bytes, timestamp, RealClock);
+    if !is_valid {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Invalid or expired signature" })),
+        )
+            .into_response();
+    }
+
     let render_context = match get_render_context(params.device_id).await {
         Ok(d) => d,
         Err(e) => {
