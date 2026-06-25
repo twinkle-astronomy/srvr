@@ -92,7 +92,7 @@ pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> 
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)))
         .layer(middleware::from_fn(connection_close));
 
     Router::new()
@@ -225,7 +225,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let response = DisplayResponse {
         image_url: Some(image_url),
         filename: Some(format!("screen_{}.bmp", timestamp)),
-        refresh_rate: 60 - Local::now().second(),
+        refresh_rate: (60 - Local::now().second()) as u32,
         update_firmware: false,
         maximum_compatibility: device.maximum_compatibility,
     };
