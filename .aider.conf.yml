@@ -1,0 +1,6 @@
+model: ollama/gpt-oss:120b
+map-tokens: 1024
+cache-prompts: true
+read:
+  - CONVENTIONS.md
+  - docs/development-process.md
