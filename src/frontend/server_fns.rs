@@ -300,6 +300,36 @@ pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))
 }
 
+/// Load a template's data sources (prometheus, range, and HTTP) and assemble a
+/// `RenderContext` for the given device + template. Shared by the three
+/// `get_*_render_context` server functions, which differ only in how they
+/// resolve the device and template.
+#[cfg(feature = "server")]
+async fn assemble_render_context(
+    device: Device,
+    template: Template,
+) -> Result<RenderContext, ServerFnError> {
+    let to_err = |e: sqlx::Error| ServerFnError::new(e.to_string());
+
+    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
+        .await
+        .map_err(to_err)?;
+    let range_queries = crate::db::get_range_queries(template.id)
+        .await
+        .map_err(to_err)?;
+    let http_sources = crate::db::get_http_sources(template.id)
+        .await
+        .map_err(to_err)?;
+
+    Ok(RenderContext {
+        device,
+        template,
+        prometheus_queries,
+        range_queries,
+        http_sources,
+    })
+}
+
 #[server]
 pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError> {
     let device = crate::db::get_device(id)
@@ -310,25 +340,7 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
-    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    let range_queries = crate::db::get_range_queries(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    let http_sources = crate::db::get_http_sources(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    Ok(RenderContext {
-        device,
-        template,
-        prometheus_queries,
-        range_queries,
-        http_sources,
-    })
+    assemble_render_context(device, template).await
 }
 
 #[server]
@@ -344,25 +356,7 @@ pub async fn get_render_context_for_template(
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
-    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    let range_queries = crate::db::get_range_queries(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    let http_sources = crate::db::get_http_sources(template.id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    Ok(RenderContext {
-        device,
-        template,
-        prometheus_queries,
-        range_queries,
-        http_sources,
-    })
+    assemble_render_context(device, template).await
 }
 
 #[server]
@@ -371,22 +365,8 @@ pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContex
     let template = crate::db::get_template_by_id(template_id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let range_queries = crate::db::get_range_queries(template.id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let http_sources = crate::db::get_http_sources(template.id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(RenderContext {
-        device,
-        template,
-        prometheus_queries,
-        range_queries,
-        http_sources,
-    })
+
+    assemble_render_context(device, template).await
 }
 
 #[server]
