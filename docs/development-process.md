@@ -11,13 +11,15 @@ These rules are mandatory. Follow them in order. Do not skip steps.
 1. Read the user's request carefully
 2. Read [projects/state.md](projects/state.md) to understand the current codebase
 3. Ask clarifying questions if the request is ambiguous — do not assume
-4. Write a plan file at `docs/projects/plans/<short-slug>.md` containing:
+4. Create a branch: `git checkout -b <short-slug>`
+5. Write a plan file at `docs/projects/plans/<short-slug>.md` containing:
+   - **Branch:** the branch name created in step 4
    - **What** is being built and why
    - **Which files** will be created or modified (be specific)
    - **How** it will be implemented: data model, API shape, UI flow
    - **Open questions or tradeoffs** you are not sure about
-5. Show the plan to the user and **stop**
-6. **Wait for explicit approval** — a response like "looks good", "yes", or "go ahead"
+6. Show the plan to the user and **stop**
+7. **Wait for explicit approval** — a response like "looks good", "yes", or "go ahead"
 7. Do not write any implementation code or tests until you receive that approval
 
 If the user requests changes to the plan, update the plan file and show it again. Repeat until approved.
@@ -114,3 +116,22 @@ After each project completes:
 - Remove the idea file from [projects/ideas/](projects/ideas/) if it originated there
 
 When the user mentions a new idea, add a file to [projects/ideas/](projects/ideas/) before it is forgotten.
+
+## Writing idea files
+
+Idea files describe **what the user will be able to do** or **what problem gets solved** — not how it will be built. Keep them abstract and user-focused.
+
+A good idea file answers:
+- What can the user do that they cannot do today?
+- What problem or friction does this remove?
+
+A good idea file does **not** include:
+- Implementation approach, data models, or API design
+- File names, module structure, or technology choices
+- Anything that belongs in a plan
+
+Implementation details belong in the plan, which is written once the idea is approved and work begins. If an idea file starts to look like a plan, trim it back.
+
+**Example of what to avoid:** "Add a `notifications` table with columns `id`, `device_id`, `message`, `created_at` and expose it via a new server function `get_notifications()`..."
+
+**Example of the right level:** "Users can receive notifications when a device has not checked in for a configurable period of time."
