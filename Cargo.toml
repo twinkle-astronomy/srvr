@@ -48,6 +48,13 @@ tokio = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client"] }
 http-body-util = "0.1"
 
+# dx keeps wasm debug symbols on by default (`--debug-symbols`), but the DWARF
+# it emits makes wasm-opt abort ("compile unit size was incorrect", SIGABRT).
+# Stripping debuginfo at link time lets the optimizer run; we prioritize the
+# optimized wasm over debug info. Keeps the name section for panic backtraces.
+[profile.release]
+strip = "debuginfo"
+
 [features]
 web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen"]
 server = [

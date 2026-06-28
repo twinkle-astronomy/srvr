@@ -141,6 +141,7 @@ pub struct DeviceLog {
     pub logged_at: String,
 }
 
+#[cfg(feature = "server")]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeviceLogEntry {
     pub id: Option<i64>,
@@ -160,8 +161,8 @@ pub struct DeviceLogEntry {
     pub wifi_status: Option<String>,
 }
 
-#[cfg_attr(feature = "server", derive(FromRow))]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg(feature = "server")]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, FromRow)]
 pub struct User {
     pub id: i64,
     pub username: String,
