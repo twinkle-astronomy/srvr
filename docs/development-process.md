@@ -68,9 +68,11 @@ Move to the next behavior in the plan. Write the next failing test. Do not skip 
 
 ## Rules
 
-- **Never write implementation code before a test exists for it**
+- **Write the failing test first for logic-bearing code** — anything with branching, computation, parsing, or edge cases. Never write that implementation before its test exists.
+- **Mechanical mirror code is the one exception.** Code that is a near-verbatim copy of something already covered by an equivalent test — e.g. CRUD for a new table that mirrors an existing table's CRUD — may be written alongside a characterization test instead of strictly test-first. The test must still assert real behavior (e.g. a create/read/update/delete round-trip), not just that it compiles. When you take this path, say so.
 - **Never move to the next behavior before the current test passes**
 - **Never show the user a passing test without having first shown the failing version**
+- **Verify external crate APIs against the source, not memory** — read the crate in `~/.cargo/registry/src` (or `cargo doc`) before calling unfamiliar methods. Macro-generated or re-exported items (e.g. a response's `as_matrix()`) don't show up in a `grep` for `fn` and are easy to hallucinate.
 - Tests live inline with the code they cover: `#[cfg(test)]` blocks in the same `.rs` file
 - Use `#[tokio::test]` for async tests
 - Use descriptive test names that state the scenario and expected outcome: `test_expired_signature_is_rejected`, not `test_signature`
@@ -78,6 +80,21 @@ Move to the next behavior in the plan. Write the next failing test. Do not skip 
 - Test return types can be `-> Result<(), E>` to allow using `?` inside tests
 
 See [testing.md](testing.md) for Rust-specific patterns.
+
+---
+
+## Definition of done
+
+A feature is not finished until **both build targets compile**. Server and web code are gated by different feature flags, so a change that builds for one can silently break the other — a missing `#[cfg(...)]`, a server-only dependency pulled into WASM, or dead code that only one target sees. Run both before considering the work complete or asking for review:
+
+```bash
+cargo test  --features server                                                     # server logic + tests
+cargo check --no-default-features --features web --target wasm32-unknown-unknown   # WASM frontend
+```
+
+(Plain `cargo test` compiles but skips every `server`-gated test, so it proves almost nothing — always pass `--features server`.)
+
+Gate per-target dead code with `#[cfg(feature = "...")]` rather than leaving a warning in the other target.
 
 ---
 
