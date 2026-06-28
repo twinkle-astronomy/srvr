@@ -79,6 +79,18 @@ See [testing.md](testing.md) for Rust-specific patterns.
 
 ---
 
+## Adding a New Feature (Typical Flow)
+
+1. Add struct to `src/models/mod.rs` (see [models.md](models.md))
+2. Add migration: `migrations/YYYYMMDDHHMMSS_description.sql` (see [migrations.md](migrations.md))
+3. Add async CRUD functions to `src/db.rs` returning `Result<T, sqlx::Error>`
+4. Add `#[server]` functions to `src/frontend/server_fns.rs`
+5. Create page: `src/frontend/pages/mypage.rs`
+6. Register in `src/frontend/pages/mod.rs`: `mod mypage; pub use mypage::MyPage;`
+7. Register route in `src/frontend/mod.rs`: add to `use pages::` import and `Route` enum
+
+---
+
 ## Evolving this process
 
 This document should change as we learn what works. Either party can propose a change at any time — proposals are especially natural after a project wraps up, but don't wait.
@@ -97,7 +109,7 @@ Process changes follow the same confirm-before-change rule — propose first, up
 ## Keeping project docs current
 
 After each project completes:
-- Add a file to [projects/completed/](projects/completed/)
+- Add a file to [projects/completed/](projects/completed/) named `YYYYMMDD-short-slug.md`
 - Update [projects/state.md](projects/state.md) if features or architecture changed
 - Remove the idea file from [projects/ideas/](projects/ideas/) if it originated there
 
