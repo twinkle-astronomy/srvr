@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ring = "0.17"
 dioxus = { version = "0.7", features = ["fullstack", "router"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -13,6 +12,7 @@ tracing = "0.1"
 base64 = "0.22"
 
 # Server-only dependencies (not WASM-compatible)
+ring = { version = "0.17", optional=true }
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["sync", "macros", "time"] }
 tower = { version = "0.5", optional = true }
@@ -80,4 +80,5 @@ server = [
     "dep:tokio-stream",
     "dep:axum-server",
     "dep:rustls-acme",
+    "dep:ring",
 ]
