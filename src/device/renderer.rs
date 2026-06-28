@@ -36,6 +36,15 @@ pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error
         }
     }
 
+    let range_queries = &render_context.range_queries;
+    let mut range_data: HashMap<String, Vec<Object>> = HashMap::with_capacity(range_queries.len());
+
+    for query in range_queries {
+        if let Ok(obj) = query.get_render_obj().await {
+            range_data.insert(query.name.clone(), obj);
+        }
+    }
+
     let http_sources = &render_context.http_sources;
     let mut http_data: HashMap<String, liquid::model::Value> =
         HashMap::with_capacity(http_sources.len());
@@ -57,6 +66,7 @@ pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error
         "timezone": time_in_tz.format("%Z").to_string(),
         "date": time_in_tz.format("%Y-%m-%d").to_string(),
         "prometheus": liquid::object!(prometheus_data),
+        "prometheus_range": liquid::object!(range_data),
         "http": liquid::object!(http_data),
     }))
 }

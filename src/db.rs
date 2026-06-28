@@ -7,7 +7,7 @@ use sqlx::{
 };
 
 use crate::models::{
-    Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, Template, User,
+    Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, RangeQuery, Template, User,
 };
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
@@ -119,6 +119,10 @@ pub async fn delete_template(id: i64) -> Result<(), sqlx::error::Error> {
 
     for prom in get_prometheus_queries(id).await? {
         delete_prometheus_query(prom.id.unwrap()).await?;
+    }
+
+    for range in get_range_queries(id).await? {
+        delete_range_query(range.id.unwrap()).await?;
     }
 
     sqlx::query("DELETE FROM templates WHERE id = ?")
@@ -388,6 +392,76 @@ pub async fn get_prometheus_queries(
     .await
 }
 
+pub async fn get_range_queries(template_id: i64) -> Result<Vec<RangeQuery>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, template_id, name, addr, query, duration, step, created_at, updated_at \
+         FROM range_queries
+         WHERE template_id = ?
+         ORDER BY name",
+    )
+    .bind(template_id)
+    .fetch_all(get())
+    .await
+}
+
+pub async fn create_range_query(
+    template_id: i64,
+    name: &str,
+    addr: &str,
+    query: &str,
+    duration: &str,
+    step: &str,
+) -> Result<RangeQuery, sqlx::error::Error> {
+    let r = sqlx::query(
+        "INSERT INTO range_queries (template_id, name, addr, query, duration, step, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+         RETURNING *",
+    )
+    .bind(template_id)
+    .bind(name)
+    .bind(addr)
+    .bind(query)
+    .bind(duration)
+    .bind(step)
+    .fetch_one(get())
+    .await?;
+
+    RangeQuery::from_row(&r)
+}
+
+pub async fn update_range_query(
+    id: i64,
+    name: &str,
+    addr: &str,
+    query: &str,
+    duration: &str,
+    step: &str,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query(
+        "UPDATE range_queries SET name = ?, addr = ?, query = ?, duration = ?, step = ?, \
+         updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(name)
+    .bind(addr)
+    .bind(query)
+    .bind(duration)
+    .bind(step)
+    .bind(id)
+    .execute(get())
+    .await?;
+
+    Ok(())
+}
+
+pub async fn delete_range_query(id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query("DELETE FROM range_queries WHERE id = ?")
+        .bind(id)
+        .execute(get())
+        .await?;
+
+    Ok(())
+}
+
 pub async fn get_http_sources(template_id: i64) -> Result<Vec<HttpSource>, sqlx::error::Error> {
     sqlx::query_as(
         "SELECT id, template_id, name, url, created_at, updated_at \
@@ -454,6 +528,19 @@ pub async fn copy_template(source_id: i64) -> Result<Template, sqlx::error::Erro
     let prom_queries = get_prometheus_queries(source_id).await?;
     for pq in prom_queries {
         create_prometheus_query(new_template.id, &pq.name, &pq.addr, &pq.query).await?;
+    }
+
+    let range_queries = get_range_queries(source_id).await?;
+    for rq in range_queries {
+        create_range_query(
+            new_template.id,
+            &rq.name,
+            &rq.addr,
+            &rq.query,
+            &rq.duration,
+            &rq.step,
+        )
+        .await?;
     }
 
     let http_sources = get_http_sources(source_id).await?;
@@ -526,4 +613,88 @@ pub async fn delete_user(id: i64) -> Result<(), sqlx::error::Error> {
         .execute(get())
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use tokio::sync::OnceCell;
+
+    static INIT: OnceCell<()> = OnceCell::const_new();
+
+    /// Initialize a process-wide in-memory SQLite pool with migrations applied,
+    /// stored in the same global `POOL` that `db::get()` reads. Idempotent and
+    /// safe to call from every test; the first caller wins and the rest reuse it.
+    pub async fn init_test_db() {
+        INIT.get_or_init(|| async {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    "sqlite::memory:"
+                        .parse::<SqliteConnectOptions>()
+                        .expect("parse in-memory sqlite url")
+                        .create_if_missing(true)
+                        .pragma("foreign_keys", "ON"),
+                )
+                .await
+                .expect("create in-memory test pool");
+            sqlx::migrate!()
+                .run(&pool)
+                .await
+                .expect("run migrations on test pool");
+            POOL.set(pool).ok();
+        })
+        .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_support::init_test_db;
+
+    #[tokio::test]
+    async fn test_range_query_crud_round_trip() {
+        init_test_db().await;
+
+        let template = create_template("range-crud-tpl", "<svg/>")
+            .await
+            .expect("create template");
+
+        let created = create_range_query(
+            template.id,
+            "cpu",
+            "http://prom:9090",
+            "rate(cpu[5m])",
+            "1h",
+            "60s",
+        )
+        .await
+        .expect("create range query");
+        assert_eq!(created.name, "cpu");
+        assert_eq!(created.duration, "1h");
+        assert_eq!(created.step, "60s");
+        let id = created.id.expect("created row has id");
+
+        let fetched = get_range_queries(template.id)
+            .await
+            .expect("get range queries");
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(fetched[0].query, "rate(cpu[5m])");
+
+        update_range_query(id, "cpu2", "http://prom:9090", "rate(cpu[1m])", "30m", "5m")
+            .await
+            .expect("update range query");
+        let after = get_range_queries(template.id).await.expect("re-get");
+        assert_eq!(after[0].name, "cpu2");
+        assert_eq!(after[0].duration, "30m");
+        assert_eq!(after[0].step, "5m");
+        assert_eq!(after[0].query, "rate(cpu[1m])");
+
+        delete_range_query(id).await.expect("delete range query");
+        let empty = get_range_queries(template.id)
+            .await
+            .expect("get after delete");
+        assert!(empty.is_empty(), "range query should be gone after delete");
+    }
 }

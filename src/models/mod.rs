@@ -38,6 +38,95 @@ impl PrometheusQuery {
 }
 
 #[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RangeQuery {
+    pub id: Option<i64>,
+    pub name: String,
+    pub template_id: i64,
+    pub addr: String,
+    pub query: String,
+    /// Window length back from now, Prometheus-style (e.g. "1h", "30m", "24h").
+    pub duration: String,
+    /// Resolution between points, Prometheus-style (e.g. "60s", "5m").
+    pub step: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl RangeQuery {
+    pub fn new(template_id: i64) -> Self {
+        Self {
+            id: None,
+            template_id,
+            name: "".to_string(),
+            addr: "".to_string(),
+            query: "".to_string(),
+            duration: "1h".to_string(),
+            step: "60s".to_string(),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        }
+    }
+}
+
+/// One time series returned by a range query, plus scaling helpers so template
+/// authors can map values into a viewport without iterating in Liquid.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RangeSeries {
+    pub labels: HashMap<String, String>,
+    pub points: Vec<RangePoint>,
+    pub min: f64,
+    pub max: f64,
+    pub first: f64,
+    pub last: f64,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RangePoint {
+    /// Unix timestamp in seconds.
+    pub t: f64,
+    pub value: f64,
+}
+
+// Built only on the server (from a Prometheus response); the web target just
+// deserializes the resulting `RangeSeries`.
+#[cfg(feature = "server")]
+impl RangeSeries {
+    /// Build a series from its labels and ordered points, computing the scaling
+    /// helpers (min/max/first/last/count). An empty series reports zeros.
+    pub fn from_points(labels: HashMap<String, String>, points: Vec<RangePoint>) -> Self {
+        let count = points.len();
+        let first = points.first().map(|p| p.value).unwrap_or(0.0);
+        let last = points.last().map(|p| p.value).unwrap_or(0.0);
+        let (min, max) = points
+            .iter()
+            .fold(None, |acc, p| {
+                let (lo, hi) = acc.unwrap_or((p.value, p.value));
+                Some((lo.min(p.value), hi.max(p.value)))
+            })
+            .unwrap_or((0.0, 0.0));
+
+        Self {
+            labels,
+            points,
+            min,
+            max,
+            first,
+            last,
+            count,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RangeQueryResult {
+    pub query_name: String,
+    pub series: Vec<RangeSeries>,
+    pub error: Option<String>,
+}
+
+#[cfg_attr(feature = "server", derive(FromRow))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Store)]
 pub struct Template {
     pub id: i64,
@@ -71,6 +160,7 @@ pub struct RenderContext {
     pub device: Device,
     pub template: Template,
     pub prometheus_queries: Vec<PrometheusQuery>,
+    pub range_queries: Vec<RangeQuery>,
     pub http_sources: Vec<HttpSource>,
 }
 
@@ -209,5 +299,39 @@ impl Device {
                 _ => 0.0,
             }
         })
+    }
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_range_series_from_points_computes_summary() {
+        let points = vec![
+            RangePoint { t: 1.0, value: 3.0 },
+            RangePoint { t: 2.0, value: 1.0 },
+            RangePoint { t: 3.0, value: 5.0 },
+        ];
+        let series = RangeSeries::from_points(HashMap::new(), points);
+        assert_eq!(series.count, 3);
+        assert_eq!(series.min, 1.0);
+        assert_eq!(series.max, 5.0);
+        assert_eq!(
+            series.first, 3.0,
+            "first should track point order, not sort"
+        );
+        assert_eq!(series.last, 5.0);
+        assert_eq!(series.points.len(), 3, "points should be preserved");
+    }
+
+    #[test]
+    fn test_range_series_from_points_empty_reports_zeros() {
+        let series = RangeSeries::from_points(HashMap::new(), vec![]);
+        assert_eq!(series.count, 0);
+        assert_eq!(series.min, 0.0);
+        assert_eq!(series.max, 0.0);
+        assert_eq!(series.first, 0.0);
+        assert_eq!(series.last, 0.0);
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{
     AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
-    PrometheusQueryResult, RenderContext, Template,
+    PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext, Template,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -80,6 +80,20 @@ mod utils {
             match value {
                 liquid::model::Value::Scalar(scalar_cow) => {
                     scalar_vars.push(scalar_to_template_var(&prefix, scalar_cow))
+                }
+                liquid::model::Value::Array(values) if key == "points" => {
+                    // Range-query series carry one point per step, which can run to
+                    // thousands of samples. Show a single summary row here (the
+                    // per-series scaling helpers — min/max/last/count — are surfaced
+                    // as their own rows) instead of exploding every sample.
+                    scalar_vars.push(TemplateVar {
+                        path: prefix.clone(),
+                        value: format!(
+                            "{} points — iterate with {{% for p in {prefix} %}}",
+                            values.len()
+                        ),
+                        is_error: false,
+                    });
                 }
                 liquid::model::Value::Array(values) => {
                     for (i, value) in values.iter().enumerate() {
@@ -300,6 +314,10 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
+    let range_queries = crate::db::get_range_queries(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
     let http_sources = crate::db::get_http_sources(template.id)
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
@@ -308,6 +326,7 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         device,
         template,
         prometheus_queries,
+        range_queries,
         http_sources,
     })
 }
@@ -329,6 +348,10 @@ pub async fn get_render_context_for_template(
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
 
+    let range_queries = crate::db::get_range_queries(template.id)
+        .await
+        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+
     let http_sources = crate::db::get_http_sources(template.id)
         .await
         .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
@@ -337,6 +360,7 @@ pub async fn get_render_context_for_template(
         device,
         template,
         prometheus_queries,
+        range_queries,
         http_sources,
     })
 }
@@ -350,6 +374,9 @@ pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContex
     let prometheus_queries = crate::db::get_prometheus_queries(template.id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let range_queries = crate::db::get_range_queries(template.id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
     let http_sources = crate::db::get_http_sources(template.id)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -357,6 +384,7 @@ pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContex
         device,
         template,
         prometheus_queries,
+        range_queries,
         http_sources,
     })
 }
@@ -406,6 +434,70 @@ pub async fn delete_prometheus_query(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_prometheus_query(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to delete query: {:?}", e)))
+}
+
+#[server]
+pub async fn save_range_query(rq: RangeQuery) -> Result<RangeQuery, ServerFnError> {
+    match rq.id {
+        Some(id) => {
+            crate::db::update_range_query(
+                id,
+                &rq.name,
+                &rq.addr,
+                &rq.query,
+                &rq.duration,
+                &rq.step,
+            )
+            .await
+            .map_err(|e| ServerFnError::new(format!("Unable to update range query: {:?}", e)))?;
+            Ok(rq)
+        }
+        None => {
+            let f = crate::db::create_range_query(
+                rq.template_id,
+                &rq.name,
+                &rq.addr,
+                &rq.query,
+                &rq.duration,
+                &rq.step,
+            )
+            .await
+            .map_err(|e| ServerFnError::new(format!("Unable to create range query: {:?}", e)))?;
+            Ok(f)
+        }
+    }
+}
+
+#[server]
+pub async fn delete_range_query(id: i64) -> Result<(), ServerFnError> {
+    crate::db::delete_range_query(id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to delete range query: {:?}", e)))
+}
+
+#[server]
+pub async fn get_range_queries_for_template(
+    template_id: i64,
+) -> Result<Vec<RangeQuery>, ServerFnError> {
+    crate::db::get_range_queries(template_id)
+        .await
+        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
+}
+
+#[server]
+pub async fn execute_range_query(query: RangeQuery) -> Result<RangeQueryResult, ServerFnError> {
+    match query.fetch_series().await {
+        Ok(series) => Ok(RangeQueryResult {
+            query_name: query.name.clone(),
+            series,
+            error: None,
+        }),
+        Err(e) => Ok(RangeQueryResult {
+            query_name: query.name.clone(),
+            series: vec![],
+            error: Some(e),
+        }),
+    }
 }
 
 #[server]
@@ -610,4 +702,41 @@ pub async fn get_server_info() -> Result<ServerInfo, ServerFnError> {
         prometheus_url,
         port: 8080,
     })
+}
+
+#[cfg(all(test, feature = "server"))]
+mod template_var_tests {
+    use super::utils::obj_to_template_var;
+
+    #[test]
+    fn test_points_array_is_summarized_not_exploded() {
+        let series = liquid::object!({
+            "points": vec![
+                liquid::model::Value::Object(liquid::object!({"t": 1.0, "value": 5.0})),
+                liquid::model::Value::Object(liquid::object!({"t": 2.0, "value": 6.0})),
+                liquid::model::Value::Object(liquid::object!({"t": 3.0, "value": 7.0})),
+            ],
+            "min": 5.0,
+            "max": 7.0,
+            "count": 3_i64,
+        });
+
+        let mut vars = vec![];
+        obj_to_template_var(&String::new(), &mut vars, &series);
+
+        let points_rows: Vec<_> = vars.iter().filter(|v| v.path.contains("points")).collect();
+        assert_eq!(
+            points_rows.len(),
+            1,
+            "points must collapse to a single summary row, not one per sample"
+        );
+        assert!(
+            points_rows[0].value.contains('3'),
+            "summary row should mention the point count, got: {}",
+            points_rows[0].value
+        );
+        // The scaling helpers must still be surfaced as their own rows.
+        assert!(vars.iter().any(|v| v.path == "min"));
+        assert!(vars.iter().any(|v| v.path == "count"));
+    }
 }
