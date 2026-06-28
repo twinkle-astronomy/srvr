@@ -19,6 +19,7 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///app/.data/data.db
       - TZ=America/Los_Angeles
+      - OLLAMA_HOST=xavier.lan:11434
     command:
       "sleep infinity"
   srvr-published:
