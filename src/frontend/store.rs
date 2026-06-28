@@ -80,6 +80,7 @@ impl AppStore {
         self.devices_loaded.set(true);
     }
 
+    #[cfg(feature = "web")]
     pub fn upsert_device(mut self, device: Device) {
         let mut list = self.devices.write();
         if !list.iter().any(|d| d.id == device.id) {
