@@ -21,7 +21,7 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - HMAC-SHA256 URL signing with 60-second expiry for image fetch security
 
 ### Rendering
-- Liquid template engine with access to device state, time, Prometheus queries, and HTTP sources
+- Liquid template engine with access to device state, time, Prometheus queries (instant and time-range), and HTTP sources
 - SVG → 1-bit BMP pipeline (usvg → resvg → tiny-skia → BMP encode)
 - Custom Liquid filters: `qrcode`, `qrcode_wifi`
 - Virtual device for previewing templates without physical hardware
@@ -29,7 +29,7 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 ### Web Dashboard
 - Device management (list, assign templates, view logs)
 - Template editor with live preview
-- Prometheus query configuration per template
+- Prometheus query configuration per template (instant and time-range queries)
 - HTTP source configuration per template
 - User management
 - Initial setup flow
