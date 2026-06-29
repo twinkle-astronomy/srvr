@@ -131,8 +131,24 @@ After each project completes:
 - Add a file to [projects/completed/](projects/completed/) named `YYYYMMDD-short-slug.md`
 - Update [projects/state.md](projects/state.md) if features or architecture changed
 - Remove the idea file from [projects/ideas/](projects/ideas/) if it originated there
+- Run a retrospective (see below)
 
 When the user mentions a new idea, add a file to [projects/ideas/](projects/ideas/) before it is forgotten.
+
+---
+
+## Retrospective (end of each project)
+
+Before considering a project closed, do a short retrospective covering:
+
+- **What worked** that we should keep doing.
+- **What caused friction, surprise, or rework** — especially anything discovered
+  late that an earlier check would have surfaced.
+- **What to change**: concrete proposals to this process, the docs, or the code.
+
+Record it as a short **Retrospective** section in the project's `completed/` doc.
+Any resulting process changes follow the [confirm-before-change rule](#evolving-this-process):
+propose first, update after the user agrees.
 
 ## Writing idea files
 

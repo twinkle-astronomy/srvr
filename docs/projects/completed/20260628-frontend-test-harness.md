@@ -100,3 +100,23 @@ analyzed and captured as a separate idea:
 `macro_rules!`-style wrapper generating both client and server glue makes the
 ~37 `#[server]` conversions mechanical; the real work/risk is the SSR→CSR serving
 switch, not the function count.
+
+## Retrospective
+
+**Worked well:** plan-first with upfront clarifying questions (surfaced the
+SSR-vs-CSR runtime reality and the testing-tier split before any code); verifying
+crate APIs against source rather than memory (caught the real root causes in
+`dioxus-web` and the test runner); TDD on the harness itself (stub → failing test
+→ implement).
+
+**Friction / rework:** the biggest miss was **building supporting infrastructure
+before validating the riskiest assumption** — Chromium, the runner, the IPv4
+`gai.conf` fix, and the `--silent` workaround were all sorted *before* discovering
+the forced-hydration blocker that made the browser tier infeasible. A ~20-minute
+"can I mount any component in a browser at all?" spike would have surfaced it
+first. Also: the conversion effort was over-estimated (a shared wrapper collapses
+the per-function work), and the plan doc went stale once Phase 2 was invalidated.
+
+**Process change adopted:** added the end-of-project **Retrospective** step.
+**Proposed (pending):** "validate the riskiest external/architectural assumption
+with a minimal spike before building dependent infrastructure."
