@@ -117,6 +117,7 @@ the forced-hydration blocker that made the browser tier infeasible. A ~20-minute
 first. Also: the conversion effort was over-estimated (a shared wrapper collapses
 the per-function work), and the plan doc went stale once Phase 2 was invalidated.
 
-**Process change adopted:** added the end-of-project **Retrospective** step.
-**Proposed (pending):** "validate the riskiest external/architectural assumption
-with a minimal spike before building dependent infrastructure."
+**Process changes adopted:** added the end-of-project **Retrospective** step, and
+a **"spike the riskiest assumption first"** rule (validate an unproven
+external/architectural assumption with a minimal spike before building dependent
+infrastructure).

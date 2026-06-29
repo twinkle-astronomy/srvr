@@ -73,6 +73,7 @@ Move to the next behavior in the plan. Write the next failing test. Do not skip 
 - **Never move to the next behavior before the current test passes**
 - **Never show the user a passing test without having first shown the failing version**
 - **Verify external crate APIs against the source, not memory** — read the crate in `~/.cargo/registry/src` (or `cargo doc`) before calling unfamiliar methods. Macro-generated or re-exported items (e.g. a response's `as_matrix()`) don't show up in a `grep` for `fn` and are easy to hallucinate.
+- **Spike the riskiest assumption first.** When a planned phase depends on an unproven external or architectural assumption (a runtime, tool, or framework behavior), validate it with a minimal spike before building dependent infrastructure. (E.g. confirm a component can mount in a headless browser at all before provisioning the browser, runner, and driver workarounds.)
 - Tests live inline with the code they cover: `#[cfg(test)]` blocks in the same `.rs` file
 - Use `#[tokio::test]` for async tests
 - Use descriptive test names that state the scenario and expected outcome: `test_expired_signature_is_rejected`, not `test_signature`
