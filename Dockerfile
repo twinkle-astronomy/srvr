@@ -7,7 +7,14 @@ RUN apt-get update && apt-get install -y \
     binaryen \
     fonts-dejavu \
     fonts-liberation \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
+
+# The container has no usable IPv6 loopback (::1), yet `localhost` resolves to
+# ::1 first by default. That breaks chromedriver / wasm-bindgen-test-runner,
+# which bind/connect via localhost. Prefer IPv4 so localhost -> 127.0.0.1.
+RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
 ARG UID=1000
 ARG GID=1000

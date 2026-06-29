@@ -46,6 +46,64 @@ pub fn Dashboard() -> Element {
     }
 }
 
+// Characterization tests for the store-driven Dashboard (no router dependency).
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+    use crate::frontend::server_fns::ServerInfo;
+    use crate::frontend::store::AppStore;
+    use crate::frontend::test_harness::render_with_store;
+
+    fn store_no_info() -> AppStore {
+        AppStore::new()
+    }
+
+    fn store_with_info() -> AppStore {
+        let mut s = AppStore::new();
+        s.server_info.set(Some(ServerInfo {
+            time: "12:34:56".to_string(),
+            date: "2026-06-28".to_string(),
+            prometheus_url: "http://prometheus.example".to_string(),
+            port: 8080,
+        }));
+        s
+    }
+
+    #[test]
+    fn dashboard_shows_spinner_when_server_info_missing() {
+        let html = render_with_store(store_no_info, Dashboard);
+        assert!(
+            html.contains("Loading..."),
+            "expected spinner while server info loads, got: {html:?}"
+        );
+        assert!(
+            !html.contains("Running"),
+            "must not claim Running before info arrives, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn dashboard_renders_server_info_when_present() {
+        let html = render_with_store(store_with_info, Dashboard);
+        assert!(
+            html.contains("Running"),
+            "expected Running status, got: {html:?}"
+        );
+        assert!(
+            html.contains("12:34:56") && html.contains("8080"),
+            "expected time and port rendered, got: {html:?}"
+        );
+        assert!(
+            html.contains("http://prometheus.example"),
+            "expected prometheus url rendered, got: {html:?}"
+        );
+        assert!(
+            !html.contains("Loading..."),
+            "must not show spinner once info present, got: {html:?}"
+        );
+    }
+}
+
 #[component]
 fn InfoRow(label: &'static str, children: Element) -> Element {
     rsx! {

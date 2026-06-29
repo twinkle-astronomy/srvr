@@ -446,6 +446,172 @@ fn DeleteButton(device_id: i64) -> Element {
     }
 }
 
+// Characterization tests: these pin the *current* rendered behavior of existing
+// presentational components. The harness builds a real VirtualDom and reads the
+// tree back via dioxus-ssr; assertions target distinctive copy plus negative
+// checks so a regression in the relevant branch breaks the test.
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+    use crate::frontend::store::AppStore;
+    use crate::frontend::test_harness::{render_with_props, render_with_store};
+
+    fn store_devices_loading() -> AppStore {
+        AppStore::new()
+    }
+
+    fn store_devices_empty() -> AppStore {
+        let mut s = AppStore::new();
+        s.devices_loaded.set(true);
+        s
+    }
+
+    fn sample_log(message: &str) -> DeviceLog {
+        DeviceLog {
+            id: 1,
+            device_id: 1,
+            device_log_id: None,
+            battery_voltage: None,
+            created_at: None,
+            firmware_version: None,
+            free_heap_size: None,
+            max_alloc_size: None,
+            message: Some(message.to_string()),
+            refresh_rate: None,
+            sleep_duration: None,
+            source_line: None,
+            source_path: None,
+            special_function: None,
+            wake_reason: None,
+            wifi_signal: None,
+            wifi_status: None,
+            logged_at: "2026-06-28T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_log_list_shows_empty_state() {
+        let html = render_with_props(
+            DeviceLogs,
+            DeviceLogsProps {
+                entries: vec![],
+                error: None,
+                loading: false,
+            },
+        );
+        assert!(
+            html.contains("No logs received yet"),
+            "expected empty-state copy in rendered output, got: {html:?}"
+        );
+        assert!(
+            !html.contains("<table"),
+            "should not render a log table when there are no entries, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn loading_logs_shows_spinner_not_empty_state() {
+        let html = render_with_props(
+            DeviceLogs,
+            DeviceLogsProps {
+                entries: vec![],
+                error: None,
+                loading: true,
+            },
+        );
+        assert!(
+            html.contains("Loading logs..."),
+            "expected loading copy while loading, got: {html:?}"
+        );
+        assert!(
+            !html.contains("No logs received yet"),
+            "must not show the empty state while still loading, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn log_error_is_surfaced_in_a_banner() {
+        let html = render_with_props(
+            DeviceLogs,
+            DeviceLogsProps {
+                entries: vec![],
+                error: Some(ServerFnError::new("boom")),
+                loading: false,
+            },
+        );
+        assert!(
+            html.contains("Error:") && html.contains("boom"),
+            "expected the error message to be rendered, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn populated_logs_render_a_table_with_the_message() {
+        let html = render_with_props(
+            DeviceLogs,
+            DeviceLogsProps {
+                entries: vec![sample_log("hello from device")],
+                error: None,
+                loading: false,
+            },
+        );
+        assert!(
+            html.contains("<table"),
+            "expected a table for populated logs, got: {html:?}"
+        );
+        assert!(
+            html.contains("hello from device"),
+            "expected the log message in the table, got: {html:?}"
+        );
+        assert!(
+            !html.contains("No logs received yet"),
+            "must not show the empty state when there are entries, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn devices_page_shows_spinner_before_load() {
+        let html = render_with_store(store_devices_loading, Devices);
+        assert!(
+            html.contains("Loading..."),
+            "expected loading spinner before devices load, got: {html:?}"
+        );
+        assert!(
+            !html.contains("No devices registered yet"),
+            "must not show empty state before load completes, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn devices_page_shows_empty_state_when_loaded_and_empty() {
+        let html = render_with_store(store_devices_empty, Devices);
+        assert!(
+            html.contains("No devices registered yet"),
+            "expected empty-state copy once loaded with no devices, got: {html:?}"
+        );
+        assert!(
+            !html.contains("Loading..."),
+            "must not show the spinner once loaded, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn detail_row_renders_label_and_value() {
+        let html = render_with_props(
+            DetailRow,
+            DetailRowProps {
+                label: "Model".to_string(),
+                value: "TRMNL OG".to_string(),
+            },
+        );
+        assert!(html.contains("Model"), "expected the label, got: {html:?}");
+        assert!(
+            html.contains("TRMNL OG"),
+            "expected the value, got: {html:?}"
+        );
+    }
+}
+
 #[component]
 fn DetailRow(label: String, value: String) -> Element {
     rsx! {

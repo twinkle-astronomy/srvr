@@ -40,13 +40,21 @@ tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], optional 
 tokio-stream = { version = "0.1", optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls"], optional = true }
 rustls-acme = { version = "0.15", features = ["axum"], optional = true }
-web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
+web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event", "Window", "Document", "Element", "HtmlElement", "Node"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
-[dev-dependencies]
+# Host-only dev-dependencies (server tests). Scoped to non-wasm so the
+# browser-tier test build doesn't try to compile tokio/mio for wasm32.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client"] }
 http-body-util = "0.1"
+
+# Browser-tier frontend tests run only on wasm32 in a headless browser.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
 
 # dx keeps wasm debug symbols on by default (`--debug-symbols`), but the DWARF
 # it emits makes wasm-opt abort ("compile unit size was incorrect", SIGABRT).

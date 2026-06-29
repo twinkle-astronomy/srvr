@@ -9,3 +9,13 @@ strip = "symbols"
 
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "debuginfo=0"]
+# Browser-tier frontend tests: `cargo test --target wasm32-unknown-unknown`
+# executes the compiled test bundle through a headless browser via this runner.
+# Only affects `cargo test`/`cargo run` for wasm; `dx` builds use their own
+# pipeline and are unaffected.
+runner = "wasm-bindgen-test-runner"
+
+# Point the runner at the system chromedriver (from the `chromium-driver`
+# package) so it drives headless Chromium deterministically.
+[env]
+CHROMEDRIVER = "/usr/bin/chromedriver"

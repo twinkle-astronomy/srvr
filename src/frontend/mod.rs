@@ -2,6 +2,8 @@ mod components;
 mod pages;
 pub mod server_fns;
 pub mod store;
+#[cfg(all(test, any(feature = "server", target_arch = "wasm32")))]
+mod test_harness;
 
 use dioxus::prelude::*;
 
