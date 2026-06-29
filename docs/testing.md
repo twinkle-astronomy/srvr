@@ -63,6 +63,51 @@ SQLite database and runs all migrations, once per test binary. Because the DB is
 shared across tests in the binary, scope rows you create (e.g. by a uniquely
 named parent template) so parallel tests don't collide.
 
+## Frontend component tests (native tier)
+
+Dioxus components are tested natively (no browser) via the harness in
+`src/frontend/test_harness.rs`, gated `#[cfg(all(test, feature = "server"))]`.
+It drives the *real* dioxus-core reactive runtime and serializes the rendered
+tree to HTML with dioxus-ssr — SSR is only a **readout** for assertions, not the
+runtime the app uses. Tests live inline next to the component, like all others.
+
+Two helpers:
+
+```rust
+use crate::frontend::test_harness::{render_with_props, render_with_store};
+
+// Pure presentational components: pass props directly.
+let html = render_with_props(DeviceLogs, DeviceLogsProps {
+    entries: vec![], error: None, loading: false,
+});
+assert!(html.contains("No logs received yet"));
+
+// Store-driven pages: build + populate an AppStore the way NavLayout would.
+// `make_store` runs inside the runtime (signals need a scope), so it must be a
+// plain fn (no captures) — write one small fn per scenario.
+fn store_loaded() -> AppStore {
+    let mut s = AppStore::new();
+    s.devices_loaded.set(true);
+    s
+}
+let html = render_with_store(store_loaded, Devices);
+```
+
+Default to targeted `assert!(html.contains(...))` / absence checks rather than
+full-string equality (robust to markup churn).
+
+**Limits of the native tier** (a browser tier was investigated but is currently
+blocked — see
+[20260628-frontend-test-harness](projects/completed/20260628-frontend-test-harness.md)):
+- **No router.** Components that call `use_navigator()` or render `Link` (e.g.
+  `Templates`, loaded device/template card lists, `Nav`) can't render natively —
+  `RouterContext` isn't constructible outside dioxus-router.
+- **No server functions.** Components that fetch via `use_resource` render their
+  loading/`None` branch (the async task is spawned, not awaited). Test their
+  loaded states by injecting data through the store, or split a presenter out that
+  takes the data as props.
+- **No DOM events.** Genuine click/input interaction isn't covered by this tier.
+
 ## Running tests
 
 ```bash

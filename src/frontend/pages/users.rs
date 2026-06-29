@@ -113,6 +113,87 @@ pub fn Users() -> Element {
     }
 }
 
+// Characterization tests for the store-driven Users page and UserRow logic.
+// Users has no router dependency, so its loaded list renders natively.
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+    use crate::frontend::store::AppStore;
+    use crate::frontend::test_harness::render_with_store;
+
+    fn au(id: i64, username: &str) -> AuthenticatedUser {
+        AuthenticatedUser {
+            id,
+            username: username.to_string(),
+        }
+    }
+
+    fn store_users_loading() -> AppStore {
+        AppStore::new()
+    }
+
+    fn store_users_two() -> AppStore {
+        let mut s = AppStore::new();
+        s.users.set(vec![au(1, "alice"), au(2, "bob")]);
+        s.current_user.set(Some(au(1, "alice")));
+        s.users_loaded.set(true);
+        s
+    }
+
+    fn store_users_only_self() -> AppStore {
+        let mut s = AppStore::new();
+        s.users.set(vec![au(1, "alice")]);
+        s.current_user.set(Some(au(1, "alice")));
+        s.users_loaded.set(true);
+        s
+    }
+
+    #[test]
+    fn users_page_shows_spinner_before_load() {
+        let html = render_with_store(store_users_loading, Users);
+        assert!(
+            html.contains("Loading..."),
+            "expected spinner before users load, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn loaded_users_are_listed_by_username() {
+        let html = render_with_store(store_users_two, Users);
+        assert!(html.contains("alice"), "expected alice listed, got: {html:?}");
+        assert!(html.contains("bob"), "expected bob listed, got: {html:?}");
+        assert!(
+            !html.contains("Loading..."),
+            "must not show spinner once loaded, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn current_user_is_marked_and_not_deletable() {
+        // Only the current user present: the "You" badge shows and there is no
+        // Delete button (the `if !is_current` branch is skipped).
+        let html = render_with_store(store_users_only_self, Users);
+        assert!(
+            html.contains("You"),
+            "expected the current-user 'You' badge, got: {html:?}"
+        );
+        assert!(
+            !html.contains("Delete"),
+            "current user must not have a Delete button, got: {html:?}"
+        );
+    }
+
+    #[test]
+    fn other_users_have_a_delete_button() {
+        // alice (current) + bob (other): bob is deletable.
+        let html = render_with_store(store_users_two, Users);
+        assert!(
+            html.contains("Delete"),
+            "expected a Delete button for the non-current user, got: {html:?}"
+        );
+    }
+}
+
 #[component]
 fn UserRow(user: AuthenticatedUser, is_current: bool) -> Element {
     let store = use_context::<AppStore>();

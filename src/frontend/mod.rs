@@ -2,6 +2,8 @@ mod components;
 mod pages;
 pub mod server_fns;
 pub mod store;
+#[cfg(all(test, feature = "server"))]
+mod test_harness;
 
 use dioxus::prelude::*;
 

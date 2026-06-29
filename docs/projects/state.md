@@ -35,6 +35,12 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - Initial setup flow
 
 ### Infrastructure
+- Native frontend test harness (`src/frontend/test_harness.rs`): renders Dioxus
+  components through the real dioxus-core runtime and asserts on SSR output, run
+  under `cargo test --features server` (no browser). A browser tier was
+  investigated but is blocked by the fullstack/hydration build — see
+  [completed/20260628-frontend-test-harness](completed/20260628-frontend-test-harness.md)
+  and the [csr-rpc-conversion](ideas/csr-rpc-conversion.md) idea.
 - SQLite with WAL mode; schema managed via sqlx migrations
 - Session-based auth with Argon2 password hashing
 - Optional TLS: manual PEM certs or Let's Encrypt ACME
