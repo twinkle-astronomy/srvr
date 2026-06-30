@@ -12,12 +12,14 @@ mod models;
 pub mod time;
 #[cfg(feature = "server")]
 mod tls;
+
 #[cfg(feature = "server")]
 async fn build_router(tls_enabled: bool) -> axum::Router {
     use axum::routing::get;
     use axum_prometheus::PrometheusMetricLayer;
     use tower_http::{
         cors::{Any, CorsLayer},
+        services::{ServeDir, ServeFile},
         trace::TraceLayer,
     };
 
@@ -46,16 +48,21 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
     let device_api = crate::device::api::router(tls_enabled);
     let auth_api = crate::auth::router();
 
-    dioxus::server::router(frontend::App)
+    // Serve the WASM bundle and static assets.
+    // In dev: dx sets DIOXUS_ASSET_DIR to the hot-reload dist folder.
+    // In prod: falls back to ./dist built by `dx build --release`.
+    let asset_dir = std::env::var("DIOXUS_ASSET_DIR").unwrap_or_else(|_| "dist".to_string());
+    let spa = ServeDir::new(&asset_dir)
+        .not_found_service(ServeFile::new(format!("{asset_dir}/index.html")));
+
+    axum::Router::new()
         .route(
             "/metrics",
             get(move || async move { metric_handle.render() }),
         )
-        .route_layer(axum::middleware::from_fn(
-            crate::auth::server_fn_auth_middleware,
-        ))
         .merge(device_api)
         .merge(auth_api)
+        .fallback_service(spa)
         .layer(auth_layer)
         .layer(TraceLayer::new_for_http())
         .layer(prometheus_layer)
@@ -88,9 +95,25 @@ fn main() {
 
         let tls_mode = crate::tls::TlsMode::from_env();
 
+        let serve_plain = || async {
+            let router = build_router(false).await;
+            let addr = format!(
+                "{}:{}",
+                std::env::var("IP").unwrap_or_else(|_| "0.0.0.0".to_string()),
+                std::env::var("PORT").unwrap_or_else(|_| "8080".to_string()),
+            );
+            let listener = tokio::net::TcpListener::bind(&addr)
+                .await
+                .expect("Failed to bind");
+            tracing::info!("Listening on {addr}");
+            axum::serve(listener, router).await.expect("Server error");
+        };
+
         match tls_mode {
             crate::tls::TlsMode::Disabled => {
-                dioxus::serve(|| async move { Ok(build_router(false).await) });
+                tokio::runtime::Runtime::new()
+                    .expect("Failed to create tokio runtime")
+                    .block_on(serve_plain());
             }
             crate::tls::TlsMode::Manual {
                 cert_path,

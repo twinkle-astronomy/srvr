@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::get_screen_preview_for_template;
+use crate::frontend::server_fns::{ServerFnError, get_screen_preview_for_template};
 use crate::frontend::store::AppStore;
 use crate::models::{Device, DeviceLog};
 
