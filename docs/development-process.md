@@ -132,6 +132,7 @@ After each project completes:
 - Add a file to [projects/completed/](projects/completed/) named `YYYYMMDD-short-slug.md`
 - Update [projects/state.md](projects/state.md) if features or architecture changed
 - Remove the idea file from [projects/ideas/](projects/ideas/) if it originated there
+- Remove the plan file from [projects/plans/](projects/plans/) if one was created
 - Run a retrospective (see below)
 
 When the user mentions a new idea, add a file to [projects/ideas/](projects/ideas/) before it is forgotten.
