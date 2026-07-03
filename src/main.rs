@@ -40,6 +40,24 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
         .await
         .expect("Failed to migrate session store");
 
+    // HMAC secret for signed image URLs: the IMAGE_SIGNATURE_SECRET env var
+    // wins when set; otherwise generate a random per-process secret. Signed
+    // URLs are only valid for ~60 seconds, so a restart invalidating in-flight
+    // URLs is an acceptable edge case — set the env var for a stable key.
+    let signing_secret = match std::env::var("IMAGE_SIGNATURE_SECRET") {
+        Ok(s) if !s.is_empty() => {
+            tracing::info!("using IMAGE_SIGNATURE_SECRET from the environment");
+            s
+        }
+        _ => {
+            tracing::info!(
+                "IMAGE_SIGNATURE_SECRET not set — using a random signing secret for this run"
+            );
+            crate::hmac::random_hex_token()
+        }
+    };
+    crate::hmac::init_signing_secret(signing_secret);
+
     let session_layer = tower_sessions::SessionManagerLayer::new(session_store)
         .with_secure(tls_enabled);
     let auth_backend = crate::auth::Backend;

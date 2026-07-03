@@ -60,7 +60,9 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
       - TZ=America/Los_Angeles
-      - IMAGE_SIGNATURE_SECRET=something_secret
+      ## IMAGE_SIGNATURE_SECRET is optional: unset, a random per-process
+      ## secret is generated (in-flight signed URLs die on restart, ~60s window).
+      # - IMAGE_SIGNATURE_SECRET=<stable-key>
       ## Manual TLS — provide cert and key files:
       # - TLS_CERT_PATH=/certs/fullchain.pem
       # - TLS_KEY_PATH=/certs/privkey.pem

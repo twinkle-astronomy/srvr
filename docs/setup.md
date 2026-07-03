@@ -16,14 +16,14 @@
 
 # ── Simplest dev workflow (no hot reload, single server) ───────────────────
 dx build --platform web    # WASM → target/dx/srvr/debug/web/public
-PORT=8080 IMAGE_SIGNATURE_SECRET=dev cargo run --features server
+PORT=8080 cargo run --features server
 # Axum auto-detects the dx build output and serves everything at :8080.
 
 # ── Production ─────────────────────────────────────────────────────────────
 # Build WASM (output: target/dx/srvr/release/web/public)
 dx build --platform web --release
 # Run server
-IMAGE_SIGNATURE_SECRET=<secret> cargo run --release --features server
+cargo run --release --features server
 
 # ── Other ──────────────────────────────────────────────────────────────────
 # Fast compile check
@@ -42,7 +42,7 @@ docker compose exec srvr bash
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `IMAGE_SIGNATURE_SECRET` | **YES — panics if missing** | — | HMAC key for `/render/screen.bmp` signing |
+| `IMAGE_SIGNATURE_SECRET` | no | random per process | HMAC key for `/render/screen.bmp` signing. Unset, a fresh secret is generated each start — in-flight signed URLs (~60s validity) die on restart. Set it for a stable key. |
 | `DATABASE_URL` | no | `sqlite:./data/devices.db` | SQLite path |
 | `TZ` | no | `UTC` | Timezone for template rendering |
 | `SERVER_HOST` | no | from Host header | Override host in image URLs (needed for dev) |
