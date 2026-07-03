@@ -10,6 +10,8 @@
 .claude/
 
 .data/
+# SQLite dev database (dev.sh runs with DATABASE_URL=sqlite:./data/devices.db)
+/data/
 .aider.chat.history.md
 .aider.input.history
 .aider.tags.cache.v*/

@@ -1,6 +1,35 @@
+use std::sync::OnceLock;
+
 use ring::hmac;
 
 use crate::time::Clock;
+
+static SIGNING_SECRET: OnceLock<String> = OnceLock::new();
+
+/// Set the process-wide HMAC signing secret. Called once during startup
+/// (`build_router`); later calls are no-ops.
+pub fn init_signing_secret(secret: String) {
+    let _ = SIGNING_SECRET.set(secret);
+}
+
+/// The HMAC secret for signed image URLs. Resolved at startup from the
+/// IMAGE_SIGNATURE_SECRET env var, or randomly generated per process when
+/// unset (signed URLs only live ~60s, so restarts are an acceptable loss).
+pub fn signing_secret() -> &'static str {
+    SIGNING_SECRET
+        .get()
+        .expect("signing secret is initialized during startup")
+}
+
+/// 64-char hex token from the kernel CSPRNG.
+pub(crate) fn random_hex_token() -> String {
+    use std::io::Read;
+    let mut buf = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .expect("Failed to read /dev/urandom");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+}
 
 /// Generate an HMAC-SHA256 signature for a device URL.
 pub fn generate_signature_bytes<C: Clock>(

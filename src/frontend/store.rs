@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::frontend::server_fns::{self, ServerInfo};
+use crate::frontend::server_fns::{self, ServerFnError, ServerInfo};
 use crate::models::{AuthenticatedUser, Device, Template};
 
 #[derive(Clone, Copy)]

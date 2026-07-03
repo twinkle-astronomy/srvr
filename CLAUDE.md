@@ -2,7 +2,7 @@
 
 A self-hosted TRMNL eink display backend. Devices poll `/api/display`, receive a signed image URL, then fetch `/render/screen.bmp` — a Liquid SVG template rendered to a 1-bit BMP.
 
-**Stack:** Axum + Dioxus Fullstack (SSR + WASM) · SQLite via sqlx · Tokio · Liquid templates · resvg → 1-bit BMP · argon2 + axum-login · HMAC-SHA256 URL signing
+**Stack:** Axum (JSON API + static serving) + Dioxus CSR (WASM dashboard) · SQLite via sqlx · Tokio · Liquid templates · resvg → 1-bit BMP · argon2 + axum-login · HMAC-SHA256 URL signing
 
 ## Docs
 
@@ -11,7 +11,7 @@ A self-hosted TRMNL eink display backend. Devices poll `/api/display`, receive a
 | Build, run, env vars | [docs/setup.md](docs/setup.md) |
 | Module map, feature flags | [docs/architecture.md](docs/architecture.md) |
 | sqlx queries, `db::get()`, INSERT/RETURNING | [docs/database.md](docs/database.md) |
-| `#[server]` functions, auth middleware, ServerFnError | [docs/server-functions.md](docs/server-functions.md) |
+| `/dashboard` JSON API, handler pattern, ApiError, fetch layer | [docs/api.md](docs/api.md) |
 | Struct derives, feature flags, `models/server.rs` | [docs/models.md](docs/models.md) |
 | Dioxus components, store, routing, adding pages | [docs/frontend.md](docs/frontend.md) |
 | Migration naming, SQLite quirks | [docs/migrations.md](docs/migrations.md) |

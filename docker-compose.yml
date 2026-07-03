@@ -20,8 +20,21 @@ services:
       - DATABASE_URL=sqlite:///app/.data/data.db
       - TZ=America/Los_Angeles
       - OLLAMA_HOST=xavier.lan:11434
+      # Browser E2E tests (tests/browser_e2e.rs) drive the `chrome` service.
+      - WEBDRIVER_URL=http://chrome:4444
+      - IMAGE_SIGNATURE_SECRET=dev
     command:
       "sleep infinity"
+
+  # Headless Chromium exposed as a WebDriver endpoint for the browser E2E tests.
+  # Its own image (Dockerfile `chrome` stage) so no browser ships in the dev
+  # image; reachable on the compose network as `chrome:4444`.
+  chrome:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: chrome
+    init: true
   srvr-published:
     profiles: ["published"]
     sysctls:
@@ -47,6 +60,9 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
       - TZ=America/Los_Angeles
+      ## IMAGE_SIGNATURE_SECRET is optional: unset, a random per-process
+      ## secret is generated (in-flight signed URLs die on restart, ~60s window).
+      # - IMAGE_SIGNATURE_SECRET=<stable-key>
       ## Manual TLS — provide cert and key files:
       # - TLS_CERT_PATH=/certs/fullchain.pem
       # - TLS_KEY_PATH=/certs/privkey.pem

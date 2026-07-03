@@ -2,7 +2,10 @@
 
 ## Structure
 
-Tests are inline with `#[cfg(test)]` blocks in the same file as the code being tested. No separate integration test harness exists yet.
+Tests are inline with `#[cfg(test)]` blocks in the same file as the code being
+tested. The one exception is the browser end-to-end tier, which lives in the
+separate [tests/browser_e2e.rs](../tests/browser_e2e.rs) integration crate (see
+below).
 
 ```rust
 #[cfg(test)]
@@ -58,10 +61,50 @@ mod tests {
 }
 ```
 
-`init_test_db` (in `src/db.rs`) initializes the global pool with an in-memory
-SQLite database and runs all migrations, once per test binary. Because the DB is
-shared across tests in the binary, scope rows you create (e.g. by a uniquely
-named parent template) so parallel tests don't collide.
+`init_test_db` (in `src/db.rs`) initializes the global pool with a **named,
+shared-cache** in-memory SQLite database (`file:trmnl_shared_test?mode=memory&cache=shared`)
+and runs all migrations, once per test binary. Shared-cache + a leaked keep-alive
+connection is what lets many `#[tokio::test]`s — each on its own runtime — see the
+same migrated schema; a plain `sqlite::memory:` is private per-connection, so a
+second test on a different runtime would reconnect to an empty DB ("no such
+table"). Because the DB is shared across the binary, scope rows you create (e.g.
+with a process-unique suffix) so parallel tests don't collide, and don't assert on
+global counts.
+
+## Browser end-to-end tests
+
+[tests/browser_e2e.rs](../tests/browser_e2e.rs) drives the **real WASM dashboard
+in headless Chromium** against a **real `srvr` process + throwaway SQLite DB**,
+exercising full user journeys through the actual UI: logging in, adding a user,
+changing a password, changing a device's template, and editing a template.
+
+The browser runs as the docker-compose **`chrome`** service — headless Chromium
+behind chromedriver (Dockerfile `chrome` stage). Nothing browser-related is
+installed in the dev image. The `srvr` service sets
+`WEBDRIVER_URL=http://chrome:4444`, so these run as part of the normal
+`cargo test --features server` inside compose:
+
+```bash
+docker compose up -d chrome      # start the browser service
+cargo test --features server     # browser E2E run alongside everything else
+```
+
+The harness (`fantoccini`) spawns the server via `CARGO_BIN_EXE_srvr` (bound to
+`0.0.0.0`, advertising this container's network IP so the browser container can
+reach it), builds the WASM bundle if missing, and gives each test its own server
++ fresh DB; `reqwest` seeds fixtures over HTTP the way the app's own endpoints do.
+Tests are serialized (one Chromium session at a time).
+
+`WEBDRIVER_URL` is **required**: each browser test fails immediately when it is
+unset, so the tier can't silently stop running. `cargo test --features server`
+therefore needs the `chrome` service up (it is, inside the compose environment).
+[`e2e.sh`](../e2e.sh) runs just this crate; set `E2E_SERVER_LOG=info` to see the
+spawned server's logs inline.
+
+These are the payoff of the CSR + JSON-API conversion: with forced hydration
+gone, the client-rendered app boots into an empty page, so a browser can drive it
+directly (see the retrospective in
+[20260628-frontend-test-harness](projects/completed/20260628-frontend-test-harness.md)).
 
 ## Frontend component tests (native tier)
 
@@ -96,13 +139,12 @@ let html = render_with_store(store_loaded, Devices);
 Default to targeted `assert!(html.contains(...))` / absence checks rather than
 full-string equality (robust to markup churn).
 
-**Limits of the native tier** (a browser tier was investigated but is currently
-blocked — see
-[20260628-frontend-test-harness](projects/completed/20260628-frontend-test-harness.md)):
+**Limits of the native tier** (the [browser E2E tier](#browser-end-to-end-tests)
+above covers these gaps):
 - **No router.** Components that call `use_navigator()` or render `Link` (e.g.
   `Templates`, loaded device/template card lists, `Nav`) can't render natively —
   `RouterContext` isn't constructible outside dioxus-router.
-- **No server functions.** Components that fetch via `use_resource` render their
+- **No API fetches.** Components that fetch via `use_resource` render their
   loading/`None` branch (the async task is spawned, not awaited). Test their
   loaded states by injecting data through the store, or split a presenter out that
   takes the data as props.

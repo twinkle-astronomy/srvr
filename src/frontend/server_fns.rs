@@ -1,10 +1,24 @@
-use dioxus::prelude::*;
+//! Shared frontend/API types and the client-call surface.
+//!
+//! - **Web build** (`feature = "web"`): re-exports the real gloo-net fetch
+//!   implementations from [`super::api`] (bottom of this file), so callers
+//!   import everything from `crate::frontend::server_fns`.
+//! - **Server build** (`feature = "server"`, used by the native component-test
+//!   tier): the same symbols exist as uniform stubs that always error. The
+//!   native tests inject state through the store and never await these
+//!   futures; real request handling lives in `src/api/`.
+
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "server")]
 use crate::models::{
     AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
     PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext, Template,
 };
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ServerInfo {
@@ -21,8 +35,36 @@ pub struct TemplateVar {
     pub is_error: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Error type
+//
+// Replaces dioxus::prelude::ServerFnError (which lived behind dioxus/fullstack).
+// The API is kept identical to the subset we use: ::new(msg), Display, Debug.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerFnError(String);
+
+impl ServerFnError {
+    pub fn new(msg: impl ToString) -> Self {
+        Self(msg.to_string())
+    }
+}
+
+impl std::fmt::Display for ServerFnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ServerFnError {}
+
+// ---------------------------------------------------------------------------
+// Server-only utilities
+// ---------------------------------------------------------------------------
+
 #[cfg(feature = "server")]
-mod utils {
+pub mod utils {
     use itertools::Itertools;
     use liquid::{
         Object,
@@ -82,10 +124,6 @@ mod utils {
                     scalar_vars.push(scalar_to_template_var(&prefix, scalar_cow))
                 }
                 liquid::model::Value::Array(values) if key == "points" => {
-                    // Range-query series carry one point per step, which can run to
-                    // thousands of samples. Show a single summary row here (the
-                    // per-series scaling helpers — min/max/last/count — are surfaced
-                    // as their own rows) instead of exploding every sample.
                     scalar_vars.push(TemplateVar {
                         path: prefix.clone(),
                         value: format!(
@@ -113,576 +151,92 @@ mod utils {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Native test tier stubs
+//
+// Keep this list in sync with the pub fns in `src/frontend/api.rs` so both
+// builds expose the same surface — a fn present in one build but not the
+// other compiles in one target and breaks the other.
+// ---------------------------------------------------------------------------
+
 #[cfg(feature = "server")]
-pub(crate) async fn require_auth() -> Result<AuthenticatedUser, ServerFnError> {
-    let auth: crate::auth::AuthSession = dioxus::fullstack::FullstackContext::extract()
-        .await
-        .map_err(|e| ServerFnError::new(format!("Auth extraction failed: {e}")))?;
-    match auth.user {
-        Some(user) => Ok(AuthenticatedUser {
-            id: user.id,
-            username: user.username,
-        }),
-        None => Err(ServerFnError::new("Not authenticated")),
-    }
+macro_rules! native_test_stubs {
+    ($( pub async fn $name:ident($($arg:ty),*) -> $ok:ty; )+) => {
+        $(
+            #[allow(dead_code)]
+            pub async fn $name($(_: $arg),*) -> Result<$ok, ServerFnError> {
+                Err(ServerFnError::new(concat!(
+                    stringify!($name),
+                    " is a native-test-tier stub; the real endpoint lives in src/api"
+                )))
+            }
+        )+
+    };
 }
 
-#[server]
-pub async fn check_auth() -> Result<Option<AuthenticatedUser>, ServerFnError> {
-    let auth: crate::auth::AuthSession = dioxus::fullstack::FullstackContext::extract()
-        .await
-        .map_err(|e| ServerFnError::new(format!("Auth extraction failed: {e}")))?;
-    Ok(auth.user.map(|u| AuthenticatedUser {
-        id: u.id,
-        username: u.username,
-    }))
-}
-
-#[server]
-pub async fn check_needs_setup() -> Result<bool, ServerFnError> {
-    let count = crate::db::user_count()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(count == 0)
-}
-
-#[server]
-pub async fn get_all_users() -> Result<Vec<AuthenticatedUser>, ServerFnError> {
-    let users = crate::db::get_users()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(users
-        .into_iter()
-        .map(|u| AuthenticatedUser {
-            id: u.id,
-            username: u.username,
-        })
-        .collect())
-}
-
-#[server]
-pub async fn delete_user(user_id: i64) -> Result<(), ServerFnError> {
-    let current = require_auth().await?;
-    if current.id == user_id {
-        return Err(ServerFnError::new("Cannot delete yourself"));
-    }
-    let count = crate::db::user_count()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if count <= 1 {
-        return Err(ServerFnError::new("Cannot delete the last user"));
-    }
-    crate::db::delete_user(user_id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError> {
-    use base64::Engine;
-
-    let render_context = get_render_context(device_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unablle to query db: {:?}", e)))?;
-
-    match crate::device::renderer::render_screen(&render_context).await {
-        Ok(bmp_bytes) => {
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
-            Ok(encoded)
-        }
-        Err(e) => {
-            tracing::info!("Failed to render screen: {}", e);
-            Err(ServerFnError::new(format!("{:?}", e)))
-        }
-    }
-}
-
-#[server]
-pub async fn get_screen_preview_for_template(
-    device_id: i64,
-    template_id: i64,
-) -> Result<String, ServerFnError> {
-    use base64::Engine;
-
-    let render_context = get_render_context_for_template(device_id, template_id).await?;
-    let bmp_bytes = crate::device::renderer::render_screen(&render_context)
-        .await
-        .map_err(|e| ServerFnError::new(format!("{:?}", e)))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bmp_bytes))
-}
-
-#[server]
-pub async fn get_template_preview(render_context: RenderContext) -> Result<String, ServerFnError> {
-    use base64::Engine;
-
-    let bmp_bytes = crate::device::renderer::render_screen(&render_context)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to render screen: {}", e)))?;
-
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
-    Ok(encoded)
-}
-
-#[server]
-pub async fn get_default_template() -> Result<Template, ServerFnError> {
-    let template = crate::db::get_default_template()
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))?;
-
-    Ok(template)
-}
-
-#[server]
-pub async fn get_templates() -> Result<Vec<Template>, ServerFnError> {
-    crate::db::get_templates()
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn get_template_by_id(id: i64) -> Result<Template, ServerFnError> {
-    crate::db::get_template_by_id(id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn create_template(name: String, content: String) -> Result<Template, ServerFnError> {
-    crate::db::create_template(&name, &content)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to create template: {:?}", e)))
-}
-
-#[server]
-pub async fn copy_template(id: i64) -> Result<Template, ServerFnError> {
-    crate::db::copy_template(id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to copy template: {:?}", e)))
-}
-
-#[server]
-pub async fn delete_template(id: i64) -> Result<(), ServerFnError> {
-    crate::db::delete_template(id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to delete template: {:?}", e)))
-}
-
-#[server]
-pub async fn save_template(id: i64, name: String, content: String) -> Result<(), ServerFnError> {
-    crate::db::update_template(id, &name, &content)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to save template: {:?}", e)))?;
-
-    Ok(())
-}
-
-#[server]
-pub async fn update_device_template(device_id: i64, template_id: i64) -> Result<(), ServerFnError> {
-    crate::db::update_device_template(device_id, template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to update device template: {:?}", e)))
-}
-
-#[server]
-pub async fn update_device_maximum_compatibility(
-    device_id: i64,
-    maximum_compatibility: bool,
-) -> Result<(), ServerFnError> {
-    crate::db::update_device_maximum_compatibility(device_id, maximum_compatibility)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to update maximum compatibility: {:?}", e)))
-}
-
-#[server]
-pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
-    crate::db::get_devices()
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))
-}
-
-/// Load a template's data sources (prometheus, range, and HTTP) and assemble a
-/// `RenderContext` for the given device + template. Shared by the three
-/// `get_*_render_context` server functions, which differ only in how they
-/// resolve the device and template.
 #[cfg(feature = "server")]
-async fn assemble_render_context(
-    device: Device,
-    template: Template,
-) -> Result<RenderContext, ServerFnError> {
-    let to_err = |e: sqlx::Error| ServerFnError::new(e.to_string());
-
-    let prometheus_queries = crate::db::get_prometheus_queries(template.id)
-        .await
-        .map_err(to_err)?;
-    let range_queries = crate::db::get_range_queries(template.id)
-        .await
-        .map_err(to_err)?;
-    let http_sources = crate::db::get_http_sources(template.id)
-        .await
-        .map_err(to_err)?;
-
-    Ok(RenderContext {
-        device,
-        template,
-        prometheus_queries,
-        range_queries,
-        http_sources,
-    })
+native_test_stubs! {
+    // Auth
+    pub async fn login(String, String) -> AuthenticatedUser;
+    pub async fn logout() -> ();
+    pub async fn setup(String, String) -> AuthenticatedUser;
+    pub async fn create_user(String, String) -> ();
+    pub async fn change_password(String, String) -> ();
+    pub async fn check_auth() -> Option<AuthenticatedUser>;
+    pub async fn check_needs_setup() -> bool;
+    pub async fn get_server_info() -> ServerInfo;
+    // Users
+    pub async fn get_all_users() -> Vec<AuthenticatedUser>;
+    pub async fn delete_user(i64) -> ();
+    // Devices
+    pub async fn get_devices() -> Vec<Device>;
+    pub async fn get_device_by_id(i64) -> Device;
+    pub async fn get_device_logs(i64) -> Vec<DeviceLog>;
+    pub async fn delete_device(i64) -> ();
+    pub async fn update_device_template(i64, i64) -> ();
+    pub async fn update_device_maximum_compatibility(i64, bool) -> ();
+    pub async fn get_render_context(i64) -> RenderContext;
+    pub async fn get_render_context_for_template(i64, i64) -> RenderContext;
+    pub async fn get_screen_preview(i64) -> String;
+    pub async fn get_screen_preview_for_template(i64, i64) -> String;
+    // Templates
+    pub async fn get_templates() -> Vec<Template>;
+    pub async fn get_default_template() -> Template;
+    pub async fn get_template_by_id(i64) -> Template;
+    pub async fn create_template(String, String) -> Template;
+    pub async fn save_template(i64, String, String) -> ();
+    pub async fn delete_template(i64) -> ();
+    pub async fn copy_template(i64) -> Template;
+    pub async fn get_virtual_render_context(i64) -> RenderContext;
+    pub async fn get_template_preview(RenderContext) -> String;
+    pub async fn get_template_context(RenderContext) -> Vec<TemplateVar>;
+    // Prometheus
+    pub async fn get_prometheus_queries_for_template(i64) -> Vec<PrometheusQuery>;
+    pub async fn save_prometheus_query(PrometheusQuery) -> PrometheusQuery;
+    pub async fn delete_prometheus_query(i64) -> ();
+    pub async fn execute_prometheus_query(PrometheusQuery) -> PrometheusQueryResult;
+    pub async fn execute_prometheus_queries(Vec<PrometheusQuery>) -> Vec<PrometheusQueryResult>;
+    // Range queries
+    pub async fn get_range_queries_for_template(i64) -> Vec<RangeQuery>;
+    pub async fn save_range_query(RangeQuery) -> RangeQuery;
+    pub async fn delete_range_query(i64) -> ();
+    pub async fn execute_range_query(RangeQuery) -> RangeQueryResult;
+    // HTTP sources
+    pub async fn save_http_source(HttpSource) -> HttpSource;
+    pub async fn delete_http_source(i64) -> ();
+    pub async fn execute_http_source(HttpSource) -> HttpSourceResult;
 }
 
-#[server]
-pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError> {
-    let device = crate::db::get_device(id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+// ---------------------------------------------------------------------------
+// Web build: re-export fetch implementations from api module
+// ---------------------------------------------------------------------------
 
-    let template = crate::db::get_template_for_device(id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
+#[cfg(not(feature = "server"))]
+pub use super::api::*;
 
-    assemble_render_context(device, template).await
-}
-
-#[server]
-pub async fn get_render_context_for_template(
-    device_id: i64,
-    template_id: i64,
-) -> Result<RenderContext, ServerFnError> {
-    let device = crate::db::get_device(device_id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    let template = crate::db::get_template_by_id(template_id)
-        .await
-        .map_err(|e: sqlx::Error| ServerFnError::new(e.to_string()))?;
-
-    assemble_render_context(device, template).await
-}
-
-#[server]
-pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContext, ServerFnError> {
-    let device = Device::virtual_device();
-    let template = crate::db::get_template_by_id(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    assemble_render_context(device, template).await
-}
-
-#[server]
-pub async fn get_device_by_id(id: i64) -> Result<Device, ServerFnError> {
-    crate::db::get_device(id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn get_device_logs(id: i64) -> Result<Vec<DeviceLog>, ServerFnError> {
-    crate::db::get_device_logs(id, 100)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn delete_device(id: i64) -> Result<(), ServerFnError> {
-    crate::db::delete_device(id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[server]
-pub async fn save_prometheus_query(pq: PrometheusQuery) -> Result<PrometheusQuery, ServerFnError> {
-    match pq.id {
-        Some(id) => {
-            crate::db::update_prometheus_query(id, &pq.name, &pq.addr, &pq.query)
-                .await
-                .map_err(|e| ServerFnError::new(format!("Unable to update query: {:?}", e)))?;
-            Ok(pq)
-        }
-        None => {
-            let f =
-                crate::db::create_prometheus_query(pq.template_id, &pq.name, &pq.addr, &pq.query)
-                    .await
-                    .map_err(|e| ServerFnError::new(format!("Unable to create query: {:?}", e)))?;
-            Ok(f)
-        }
-    }
-}
-
-#[server]
-pub async fn delete_prometheus_query(id: i64) -> Result<(), ServerFnError> {
-    crate::db::delete_prometheus_query(id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to delete query: {:?}", e)))
-}
-
-#[server]
-pub async fn save_range_query(rq: RangeQuery) -> Result<RangeQuery, ServerFnError> {
-    match rq.id {
-        Some(id) => {
-            crate::db::update_range_query(
-                id,
-                &rq.name,
-                &rq.addr,
-                &rq.query,
-                &rq.duration,
-                &rq.step,
-            )
-            .await
-            .map_err(|e| ServerFnError::new(format!("Unable to update range query: {:?}", e)))?;
-            Ok(rq)
-        }
-        None => {
-            let f = crate::db::create_range_query(
-                rq.template_id,
-                &rq.name,
-                &rq.addr,
-                &rq.query,
-                &rq.duration,
-                &rq.step,
-            )
-            .await
-            .map_err(|e| ServerFnError::new(format!("Unable to create range query: {:?}", e)))?;
-            Ok(f)
-        }
-    }
-}
-
-#[server]
-pub async fn delete_range_query(id: i64) -> Result<(), ServerFnError> {
-    crate::db::delete_range_query(id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to delete range query: {:?}", e)))
-}
-
-#[server]
-pub async fn get_range_queries_for_template(
-    template_id: i64,
-) -> Result<Vec<RangeQuery>, ServerFnError> {
-    crate::db::get_range_queries(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
-}
-
-#[server]
-pub async fn execute_range_query(query: RangeQuery) -> Result<RangeQueryResult, ServerFnError> {
-    match query.fetch_series().await {
-        Ok(series) => Ok(RangeQueryResult {
-            query_name: query.name.clone(),
-            series,
-            error: None,
-        }),
-        Err(e) => Ok(RangeQueryResult {
-            query_name: query.name.clone(),
-            series: vec![],
-            error: Some(e),
-        }),
-    }
-}
-
-#[server]
-pub async fn get_prometheus_queries_for_template(
-    template_id: i64,
-) -> Result<Vec<PrometheusQuery>, ServerFnError> {
-    crate::db::get_prometheus_queries(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
-}
-
-#[server]
-pub async fn execute_prometheus_query(
-    query: PrometheusQuery,
-) -> Result<PrometheusQueryResult, ServerFnError> {
-    use crate::models::{PrometheusMetricResult, server::http_client};
-    let client =
-        match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: vec![],
-                    error: Some(format!("Invalid prometheus address: {e}")),
-                });
-            }
-        };
-
-    match client.query(query.query.as_str()).get().await {
-        Ok(response) => {
-            let metrics = response
-                .data()
-                .as_vector()
-                .map(|v| {
-                    v.iter()
-                        .map(|x| PrometheusMetricResult {
-                            labels: x.metric().clone(),
-                            value: x.sample().value(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(PrometheusQueryResult {
-                query_name: query.name.clone(),
-                results: metrics,
-                error: None,
-            })
-        }
-        Err(e) => Ok(PrometheusQueryResult {
-            query_name: query.name.clone(),
-            results: vec![],
-            error: Some(e.to_string()),
-        }),
-    }
-}
-
-#[server]
-pub async fn execute_prometheus_queries(
-    queries: Vec<PrometheusQuery>,
-) -> Result<Vec<PrometheusQueryResult>, ServerFnError> {
-    use crate::models::PrometheusMetricResult;
-
-    // let queries = crate::db::get_prometheus_queries(template_id)
-    //     .await
-    //     .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))?;
-
-    let mut results = Vec::with_capacity(queries.len());
-    for query in &queries {
-        use crate::models::server::http_client;
-
-        let client =
-            match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
-                Ok(c) => c,
-                Err(e) => {
-                    results.push(PrometheusQueryResult {
-                        query_name: query.name.clone(),
-                        results: vec![],
-                        error: Some(format!("Invalid prometheus address: {e}")),
-                    });
-                    continue;
-                }
-            };
-
-        match client.query(query.query.as_str()).get().await {
-            Ok(response) => {
-                let metrics = response
-                    .data()
-                    .as_vector()
-                    .map(|v| {
-                        v.iter()
-                            .map(|x| PrometheusMetricResult {
-                                labels: x.metric().clone(),
-                                value: x.sample().value(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                results.push(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: metrics,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                results.push(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: vec![],
-                    error: Some(e.to_string()),
-                });
-            }
-        }
-    }
-
-    Ok(results)
-}
-
-#[server]
-pub async fn save_http_source(source: HttpSource) -> Result<HttpSource, ServerFnError> {
-    match source.id {
-        Some(id) => {
-            crate::db::update_http_source(id, &source.name, &source.url)
-                .await
-                .map_err(|e| {
-                    ServerFnError::new(format!("Unable to update http source: {:?}", e))
-                })?;
-            Ok(source)
-        }
-        None => {
-            let f = crate::db::create_http_source(source.template_id, &source.name, &source.url)
-                .await
-                .map_err(|e| {
-                    ServerFnError::new(format!("Unable to create http source: {:?}", e))
-                })?;
-            Ok(f)
-        }
-    }
-}
-
-#[server]
-pub async fn delete_http_source(id: i64) -> Result<(), ServerFnError> {
-    crate::db::delete_http_source(id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to delete http source: {:?}", e)))
-}
-
-#[server]
-pub async fn execute_http_source(source: HttpSource) -> Result<HttpSourceResult, ServerFnError> {
-    use crate::models::server::http_client;
-
-    let response = http_client()
-        .get(&source.url)
-        .header("Accept", "application/json")
-        .send()
-        .await;
-
-    match response {
-        Ok(resp) => match resp.json::<serde_json::Value>().await {
-            Ok(data) => Ok(HttpSourceResult {
-                source_name: source.name,
-                data: Some(data),
-                error: None,
-            }),
-            Err(e) => Ok(HttpSourceResult {
-                source_name: source.name,
-                data: None,
-                error: Some(format!("Failed to parse JSON: {e}")),
-            }),
-        },
-        Err(e) => Ok(HttpSourceResult {
-            source_name: source.name,
-            data: None,
-            error: Some(e.to_string()),
-        }),
-    }
-}
-
-#[server]
-pub async fn get_template_context(
-    render_context: RenderContext,
-) -> Result<Vec<TemplateVar>, ServerFnError> {
-    use crate::{device::renderer::render_vars, frontend::server_fns::utils::obj_to_template_var};
-
-    let device_obj = render_vars(&render_context)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    let mut vars: Vec<TemplateVar> = vec![];
-    obj_to_template_var(&"".to_string(), &mut vars, &device_obj);
-
-    Ok(vars)
-}
-
-#[server]
-pub async fn get_server_info() -> Result<ServerInfo, ServerFnError> {
-    let now = chrono::Utc::now();
-    let prometheus_url =
-        std::env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string());
-
-    Ok(ServerInfo {
-        time: now.format("%H:%M:%S UTC").to_string(),
-        date: now.format("%Y-%m-%d").to_string(),
-        prometheus_url,
-        port: 8080,
-    })
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(all(test, feature = "server"))]
 mod template_var_tests {
@@ -715,7 +269,6 @@ mod template_var_tests {
             "summary row should mention the point count, got: {}",
             points_rows[0].value
         );
-        // The scaling helpers must still be surfaced as their own rows.
         assert!(vars.iter().any(|v| v.path == "min"));
         assert!(vars.iter().any(|v| v.path == "count"));
     }

@@ -25,7 +25,7 @@ use crate::time::Clock;
 use crate::{
     db::{get_device_id_by_access_token, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
-    frontend::server_fns::get_render_context,
+    api::render_context_for_device,
     hmac::{generate_signature_bytes, validate_signature},
     models::{DeviceLog, DeviceLogEntry},
     time::RealClock,
@@ -130,12 +130,7 @@ struct SetupResponse {
 }
 
 fn generate_access_token() -> String {
-    use std::io::Read;
-    let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut buf).map(|_| ()))
-        .expect("Failed to read /dev/urandom");
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
+    crate::hmac::random_hex_token()
 }
 
 // GET /api/display - Fetch the next screen
@@ -212,9 +207,8 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     };
 
     // Generate HMAC signature for the image URL
-    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
-        .expect("IMAGE_SIGNATURE_SECRET must be set");
-    let signed_bytes = generate_signature_bytes(&secret, device.id, real_clock.clone());
+    let secret = crate::hmac::signing_secret();
+    let signed_bytes = generate_signature_bytes(secret, device.id, real_clock.clone());
     let sig_encoded = URL_SAFE_NO_PAD.encode(&signed_bytes);
 
     let image_url = format!(
@@ -335,9 +329,8 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     };
 
     // Generate HMAC signature for the image URL
-    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
-        .expect("IMAGE_SIGNATURE_SECRET must be set");
-    let signed_bytes = generate_signature_bytes(&secret, device.id, real_clock.clone());
+    let secret = crate::hmac::signing_secret();
+    let signed_bytes = generate_signature_bytes(secret, device.id, real_clock.clone());
     let sig_encoded = URL_SAFE_NO_PAD.encode(&signed_bytes);
 
     let image_url = format!(
@@ -399,10 +392,9 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
         }
     };
 
-    let secret = std::env::var("IMAGE_SIGNATURE_SECRET")
-        .expect("IMAGE_SIGNATURE_SECRET must be set");
+    let secret = crate::hmac::signing_secret();
 
-    let is_valid = validate_signature(&secret, params.device_id, &signed_bytes, timestamp, RealClock);
+    let is_valid = validate_signature(secret, params.device_id, &signed_bytes, timestamp, RealClock);
     if !is_valid {
         return (
             StatusCode::UNAUTHORIZED,
@@ -411,7 +403,7 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
             .into_response();
     }
 
-    let render_context = match get_render_context(params.device_id).await {
+    let render_context = match render_context_for_device(params.device_id).await {
         Ok(d) => d,
         Err(e) => {
             error!("Error: {:?}", e);

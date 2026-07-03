@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 
-use crate::frontend::store::AppStore;
+use crate::frontend::{
+    server_fns::{change_password, create_user},
+    store::AppStore,
+};
 use crate::models::AuthenticatedUser;
 
 #[component]
@@ -12,6 +15,19 @@ pub fn Users() -> Element {
 
     let current_user_id = current_user().map(|u| u.id);
 
+    // Change-password form state
+    let mut cp_current = use_signal(String::new);
+    let mut cp_new = use_signal(String::new);
+    let mut cp_error = use_signal(|| None::<String>);
+    let mut cp_success = use_signal(|| false);
+    let mut cp_submitting = use_signal(|| false);
+
+    // Create-user form state
+    let mut cu_username = use_signal(String::new);
+    let mut cu_password = use_signal(String::new);
+    let mut cu_error = use_signal(|| None::<String>);
+    let mut cu_submitting = use_signal(|| false);
+
     rsx! {
         div { class: "mb-8",
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Users" }
@@ -19,75 +35,153 @@ pub fn Users() -> Element {
         }
 
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
-            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Change Password" }
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4",
+                "Change Password"
+            }
+            if cp_success() {
+                div { class: "mb-4 p-3 bg-green-50 border border-green-200 rounded-lg",
+                    p { class: "text-sm text-green-700", "Password changed successfully." }
+                }
+            }
+            if let Some(ref msg) = cp_error() {
+                div { class: "mb-4 p-3 bg-red-50 border border-red-200 rounded-lg",
+                    p { class: "text-sm text-red-600", "{msg}" }
+                }
+            }
             form {
-                action: "/auth/change-password",
-                method: "POST",
                 class: "flex items-end gap-3",
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    let current = cp_current();
+                    let new = cp_new();
+                    cp_error.set(None);
+                    cp_success.set(false);
+                    cp_submitting.set(true);
+                    spawn(async move {
+                        match change_password(current, new).await {
+                            Ok(()) => {
+                                cp_current.set(String::new());
+                                cp_new.set(String::new());
+                                cp_success.set(true);
+                            }
+                            Err(e) => cp_error.set(Some(e.to_string())),
+                        }
+                        cp_submitting.set(false);
+                    });
+                },
 
                 div { class: "flex-1",
-                    label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "current_password", "Current Password" }
+                    label {
+                        class: "block text-sm font-medium text-gray-700 mb-1",
+                        r#for: "current_password",
+                        "Current Password"
+                    }
                     input {
                         r#type: "password",
                         id: "current_password",
                         name: "current_password",
                         required: true,
                         class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                        value: "{cp_current()}",
+                        oninput: move |e| cp_current.set(e.value()),
                     }
                 }
 
                 div { class: "flex-1",
-                    label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "new_password", "New Password" }
+                    label {
+                        class: "block text-sm font-medium text-gray-700 mb-1",
+                        r#for: "new_password",
+                        "New Password"
+                    }
                     input {
                         r#type: "password",
                         id: "new_password",
                         name: "new_password",
                         required: true,
                         class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                        value: "{cp_new()}",
+                        oninput: move |e| cp_new.set(e.value()),
                     }
                 }
 
                 button {
                     r#type: "submit",
-                    class: "px-4 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                    "Change"
+                    disabled: cp_submitting(),
+                    class: "px-4 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50",
+                    if cp_submitting() { "Changing..." } else { "Change" }
                 }
             }
         }
 
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
-            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4", "Create User" }
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4",
+                "Create User"
+            }
+            if let Some(ref msg) = cu_error() {
+                div { class: "mb-4 p-3 bg-red-50 border border-red-200 rounded-lg",
+                    p { class: "text-sm text-red-600", "{msg}" }
+                }
+            }
             form {
-                action: "/auth/create-user",
-                method: "POST",
                 class: "flex items-end gap-3",
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    let uname = cu_username();
+                    let pass = cu_password();
+                    cu_error.set(None);
+                    cu_submitting.set(true);
+                    spawn(async move {
+                        match create_user(uname, pass).await {
+                            Ok(()) => {
+                                cu_username.set(String::new());
+                                cu_password.set(String::new());
+                                spawn(store.fetch_users());
+                            }
+                            Err(e) => cu_error.set(Some(e.to_string())),
+                        }
+                        cu_submitting.set(false);
+                    });
+                },
 
                 div { class: "flex-1",
-                    label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "username", "Username" }
+                    label {
+                        class: "block text-sm font-medium text-gray-700 mb-1",
+                        r#for: "new_username",
+                        "Username"
+                    }
                     input {
                         r#type: "text",
-                        id: "username",
+                        id: "new_username",
                         name: "username",
                         required: true,
                         class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                        value: "{cu_username()}",
+                        oninput: move |e| cu_username.set(e.value()),
                     }
                 }
 
                 div { class: "flex-1",
-                    label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "password", "Password" }
+                    label {
+                        class: "block text-sm font-medium text-gray-700 mb-1",
+                        r#for: "new_user_password",
+                        "Password"
+                    }
                     input {
                         r#type: "password",
-                        id: "password",
+                        id: "new_user_password",
                         name: "password",
                         required: true,
                         class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                        value: "{cu_password()}",
+                        oninput: move |e| cu_password.set(e.value()),
                     }
                 }
 
                 button {
                     r#type: "submit",
-                    class: "px-4 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                    "Create"
+                    disabled: cu_submitting(),
+                    class: "px-4 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50",
+                    if cu_submitting() { "Creating..." } else { "Create" }
                 }
             }
         }

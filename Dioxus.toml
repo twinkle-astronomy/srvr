@@ -1,11 +1,33 @@
 [application]
 name = "srvr"
-default_platform = "fullstack"
+default_platform = "web"
 out_dir = "dist"
 asset_dir = "assets"
 
 [web.app]
 title = "TRMNL Dashboard"
+
+# dx serve proxies by path prefix; there is no "forward everything" option.
+# Each entry below covers one top-level route family owned by the Axum server.
+# Anything not matched here (WASM bundle, /assets/*, /_dioxus/*) is served
+# directly by dx.
+#
+# dx's dev server can't run our custom Axum routes, so the API runs as its own
+# process and these proxies forward to it. Use `./dev.sh` to start both at once.
+[[web.proxy]]
+backend = "http://127.0.0.1:8080/dashboard"
+
+[[web.proxy]]
+backend = "http://127.0.0.1:8080/api"
+
+[[web.proxy]]
+backend = "http://127.0.0.1:8080/auth"
+
+[[web.proxy]]
+backend = "http://127.0.0.1:8080/render"
+
+[[web.proxy]]
+backend = "http://127.0.0.1:8080/metrics"
 
 [web.watcher]
 reload_html = true

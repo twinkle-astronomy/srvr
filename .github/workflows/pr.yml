@@ -1,0 +1,122 @@
+# PR flow: on every push to a PR, run the full test suite and (in parallel)
+# publish a multi-arch image tagged with the PR's branch name. When the PR
+# closes (merged or abandoned) the branch tag is deleted from ghcr — durable
+# images come from the v* release flow (docker-publish.yml).
+name: PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Full suite inside the same compose services developers use: the srvr dev
+  # container (cargo + dx + wasm target) with the chrome service providing
+  # WEBDRIVER_URL for the mandatory browser E2E tier.
+  test:
+    if: github.event.action != 'closed'
+    runs-on: arc-runner-amd64
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install docker compose plugin
+        # The ARC runner image ships the docker CLI without the compose plugin.
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/v5.3.0/docker-compose-linux-$(uname -m)" \
+            -o ~/.docker/cli-plugins/docker-compose
+          chmod +x ~/.docker/cli-plugins/docker-compose
+          docker compose version
+
+      - name: Build compose images
+        # UID is bash-readonly (already correct); GID must be derived. Compose
+        # passes both as build args so the container user owns the workspace.
+        run: |
+          export UID
+          export GID="$(id -g)"
+          docker compose build srvr chrome
+
+      - name: Prepare build cache volumes
+        # Persist target/ and the cargo registry across runs so the debug
+        # compile is incremental — the same daemon-persistence assumption the
+        # keep-state buildx builders make. Fresh named volumes are root-owned,
+        # so hand the mount points to the container user once (top level only;
+        # the contents are created by that user). Reset by deleting the
+        # volumes if they ever misbehave.
+        run: |
+          export UID
+          export GID="$(id -g)"
+          docker volume create srvr-ci-target
+          docker volume create srvr-ci-cargo-registry
+          docker compose run --rm --user root \
+            -v srvr-ci-target:/app/target \
+            -v srvr-ci-cargo-registry:/usr/local/cargo/registry \
+            srvr chown "$(id -u):$(id -g)" /app/target /usr/local/cargo/registry
+
+      - name: Start chrome (WebDriver) service
+        run: docker compose up -d chrome
+
+      - name: Run tests
+        # `compose run` overrides the srvr service's `sleep infinity` command
+        # and does not publish its ports, so nothing collides on a shared runner.
+        run: |
+          export UID
+          export GID="$(id -g)"
+          docker compose run --rm \
+            -v srvr-ci-target:/app/target \
+            -v srvr-ci-cargo-registry:/usr/local/cargo/registry \
+            srvr bash -c '
+            set -e
+            dx build --platform web
+            cargo test --features server
+            cargo check --no-default-features --features web --target wasm32-unknown-unknown'
+
+      - name: Tear down compose services
+        if: always()
+        run: docker compose down --remove-orphans
+
+  # Deliberately NOT gated on the test job (`needs: test`): the image is
+  # published even when tests are red, so reviewers can try out a PR build
+  # when building locally isn't an option. Check the test job's status before
+  # trusting a build.
+  image:
+    if: github.event.action != 'closed'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      # metadata-action sanitizes the branch name into a valid tag (invalid
+      # char sequences -> '-'); cleanup below derives the identical tag by
+      # running the same action on the same input.
+      tags: type=raw,value=${{ github.head_ref }}
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: arc-runner-amd64
+    permissions:
+      packages: write
+    steps:
+      - name: Compute image tag for branch
+        id: meta
+        # Same action + same input as the image job, so the computed tag is
+        # identical by construction (no hand-mirrored sanitization rules).
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=raw,value=${{ github.head_ref }}
+
+      - name: Delete branch image tag from ghcr
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        # Deletes the manifest list and its orphaned per-arch children while
+        # keeping digests referenced by other tags (release images).
+        # Tolerate a missing tag: the image push may have failed or been
+        # cancelled before completing.
+        continue-on-error: true
+        with:
+          delete-tags: ${{ steps.meta.outputs.version }}
+          token: ${{ secrets.GITHUB_TOKEN }}

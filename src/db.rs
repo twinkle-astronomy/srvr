@@ -618,6 +618,7 @@ pub async fn delete_user(id: i64) -> Result<(), sqlx::error::Error> {
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
+    use sqlx::{Connection, sqlite::SqliteConnection};
     use tokio::sync::OnceCell;
 
     static INIT: OnceCell<()> = OnceCell::const_new();
@@ -627,17 +628,33 @@ pub(crate) mod test_support {
     /// safe to call from every test; the first caller wins and the rest reuse it.
     pub async fn init_test_db() {
         INIT.get_or_init(|| async {
-            let pool = SqlitePoolOptions::new()
-                .max_connections(1)
-                .connect_with(
-                    "sqlite::memory:"
-                        .parse::<SqliteConnectOptions>()
-                        .expect("parse in-memory sqlite url")
-                        .create_if_missing(true)
-                        .pragma("foreign_keys", "ON"),
-                )
+            // Each `#[tokio::test]` runs on its own runtime. A plain
+            // `sqlite::memory:` database is private to a single connection, so
+            // when a later test on a different runtime acquires a fresh
+            // connection it sees an empty database ("no such table"). A *named,
+            // shared-cache* in-memory database is shared by every connection
+            // that opens the same URI and persists as long as one connection
+            // stays open — so all tests, on any runtime, see the same migrated
+            // schema.
+            let opts = "sqlite:file:trmnl_shared_test?mode=memory&cache=shared"
+                .parse::<SqliteConnectOptions>()
+                .expect("parse shared in-memory sqlite url")
+                .create_if_missing(true)
+                .pragma("foreign_keys", "ON");
+
+            // A leaked keep-alive connection guarantees the shared in-memory DB
+            // is never torn down (it vanishes once the last connection closes),
+            // independent of the pool reaping idle connections.
+            let keepalive = SqliteConnection::connect_with(&opts)
                 .await
-                .expect("create in-memory test pool");
+                .expect("open keep-alive connection to shared in-memory DB");
+            std::mem::forget(keepalive);
+
+            let pool = SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect_with(opts)
+                .await
+                .expect("create shared in-memory test pool");
             sqlx::migrate!()
                 .run(&pool)
                 .await
@@ -697,4 +714,7 @@ mod tests {
             .expect("get after delete");
         assert!(empty.is_empty(), "range query should be gone after delete");
     }
+// temporary probe appended to src/db.rs tests
+
+
 }
