@@ -23,6 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install docker compose plugin
+        # The ARC runner image ships the docker CLI without the compose plugin.
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/download/v5.3.0/docker-compose-linux-$(uname -m)" \
+            -o ~/.docker/cli-plugins/docker-compose
+          chmod +x ~/.docker/cli-plugins/docker-compose
+          docker compose version
+
       - name: Build compose images
         # UID is bash-readonly (already correct); GID must be derived. Compose
         # passes both as build args so the container user owns the workspace.
