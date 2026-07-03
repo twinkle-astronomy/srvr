@@ -40,6 +40,23 @@ jobs:
           export GID="$(id -g)"
           docker compose build srvr chrome
 
+      - name: Prepare build cache volumes
+        # Persist target/ and the cargo registry across runs so the debug
+        # compile is incremental — the same daemon-persistence assumption the
+        # keep-state buildx builders make. Fresh named volumes are root-owned,
+        # so hand the mount points to the container user once (top level only;
+        # the contents are created by that user). Reset by deleting the
+        # volumes if they ever misbehave.
+        run: |
+          export UID
+          export GID="$(id -g)"
+          docker volume create srvr-ci-target
+          docker volume create srvr-ci-cargo-registry
+          docker compose run --rm --user root \
+            -v srvr-ci-target:/app/target \
+            -v srvr-ci-cargo-registry:/usr/local/cargo/registry \
+            srvr chown "$(id -u):$(id -g)" /app/target /usr/local/cargo/registry
+
       - name: Start chrome (WebDriver) service
         run: docker compose up -d chrome
 
@@ -49,7 +66,10 @@ jobs:
         run: |
           export UID
           export GID="$(id -g)"
-          docker compose run --rm srvr bash -c '
+          docker compose run --rm \
+            -v srvr-ci-target:/app/target \
+            -v srvr-ci-cargo-registry:/usr/local/cargo/registry \
+            srvr bash -c '
             set -e
             dx build --platform web
             cargo test --features server
