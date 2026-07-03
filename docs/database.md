@@ -56,7 +56,14 @@ Template::from_row(&row)?
 
 ## Error handling
 
-DB functions return `Result<T, sqlx::Error>`. When calling from a `#[server]` function, convert with `.to_string()`:
+DB functions return `Result<T, sqlx::Error>`. In `src/api/` handlers, `?` converts
+it to `ApiError` automatically (`RowNotFound` → 404, otherwise 500):
+
+```rust
+let templates = crate::db::get_templates().await?;
+```
+
+Elsewhere (e.g. frontend `server_fns.rs` impls), convert explicitly:
 
 ```rust
 crate::db::get_templates().await

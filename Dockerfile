@@ -72,3 +72,20 @@ ENV IP=0.0.0.0
 ENV PORT=8080
 
 CMD ["/dist/server"]
+
+# Headless Chromium exposed as a WebDriver endpoint for the browser E2E tests
+# (tests/browser_e2e.rs). Kept out of the dev image so no browser ships there;
+# the docker-compose `chrome` service builds this stage.
+FROM debian:trixie-slim AS chrome
+RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-driver \
+    fonts-dejavu \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 4444
+# --allowed-ips= (empty) accepts connections from any IP on the compose network;
+# --allowed-origins=* permits fantoccini's requests. chromedriver launches
+# headless Chromium per session using the args the tests pass.
+CMD ["chromedriver", "--port=4444", "--allowed-ips=", "--allowed-origins=*"]

@@ -71,7 +71,7 @@ impl AuthnBackend for Backend {
 
 pub type AuthSession = axum_login::AuthSession<Backend>;
 
-fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
+pub(crate) fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     use argon2::password_hash::rand_core::OsRng;
     use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 
@@ -186,32 +186,6 @@ async fn change_password(auth: AuthSession, Form(form): Form<ChangePassword>) ->
     match crate::db::update_user_password(user.id, &new_hash).await {
         Ok(_) => Redirect::to("/users?success=password_changed").into_response(),
         Err(_) => Redirect::to("/users?error=server").into_response(),
-    }
-}
-
-pub async fn server_fn_auth_middleware(
-    auth: AuthSession,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::http::{Method, StatusCode};
-
-    // GET requests (SSR pages, assets) pass through — frontend handles redirects
-    if request.method() != Method::POST {
-        return next.run(request).await;
-    }
-
-    // Allowlist: public server functions that work without auth
-    let path = request.uri().path();
-    if path.contains("check_auth") || path.contains("check_needs_setup") {
-        return next.run(request).await;
-    }
-
-    // All other POST requests (server functions) require auth
-    if auth.user.is_some() {
-        next.run(request).await
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
     }
 }
 

@@ -95,6 +95,8 @@ cargo check --no-default-features --features web --target wasm32-unknown-unknown
 
 (Plain `cargo test` compiles but skips every `server`-gated test, so it proves almost nothing — always pass `--features server`.)
 
+The test run includes the browser E2E tier, which **requires** `WEBDRIVER_URL` (the compose `chrome` service) and fails without it — see [testing.md](testing.md#browser-end-to-end-tests).
+
 Gate per-target dead code with `#[cfg(feature = "...")]` rather than leaving a warning in the other target.
 
 ---
@@ -104,7 +106,7 @@ Gate per-target dead code with `#[cfg(feature = "...")]` rather than leaving a w
 1. Add struct to `src/models/mod.rs` (see [models.md](models.md))
 2. Add migration: `migrations/YYYYMMDDHHMMSS_description.sql` (see [migrations.md](migrations.md))
 3. Add async CRUD functions to `src/db.rs` returning `Result<T, sqlx::Error>`
-4. Add `#[server]` functions to `src/frontend/server_fns.rs`
+4. Add JSON API handlers to `src/api/` and fetch helpers to `src/frontend/api.rs` (see [api.md](api.md))
 5. Create page: `src/frontend/pages/mypage.rs`
 6. Register in `src/frontend/pages/mod.rs`: `mod mypage; pub use mypage::MyPage;`
 7. Register route in `src/frontend/mod.rs`: add to `use pages::` import and `Route` enum

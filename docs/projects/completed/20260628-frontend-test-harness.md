@@ -94,9 +94,8 @@ running the wasm:
 
 A faithful browser test for this app is either **E2E against the running server**
 (which provides hydration data) or requires converting the frontend to **CSR +
-an RPC/REST API** so the build no longer forces hydration. The latter was
-analyzed and captured as a separate idea:
-[csr-rpc-conversion](../ideas/csr-rpc-conversion.md). Its takeaway: a single
+an RPC/REST API** so the build no longer forces hydration. The latter was done —
+see [20260702-csr-rpc-conversion](20260702-csr-rpc-conversion.md). Its takeaway: a single
 `macro_rules!`-style wrapper generating both client and server glue makes the
 ~37 `#[server]` conversions mechanical; the real work/risk is the SSR→CSR serving
 switch, not the function count.

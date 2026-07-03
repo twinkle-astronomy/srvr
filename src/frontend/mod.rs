@@ -1,4 +1,7 @@
 mod components;
+#[cfg(not(feature = "server"))]
+#[allow(dead_code, unused_imports)]
+pub mod api;
 mod pages;
 pub mod server_fns;
 pub mod store;

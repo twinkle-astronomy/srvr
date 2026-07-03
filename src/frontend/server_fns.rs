@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "server")]
 use crate::models::{
     AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
     PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext, Template,
@@ -53,7 +54,7 @@ impl std::error::Error for ServerFnError {}
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "server")]
-mod utils {
+pub mod utils {
     use itertools::Itertools;
     use liquid::{
         Object,
@@ -146,7 +147,9 @@ mod utils {
 
 #[cfg(feature = "server")]
 pub(crate) async fn require_auth() -> Result<AuthenticatedUser, ServerFnError> {
-    // Spike stub: FullstackContext removed. Real auth happens in Phase 2 Axum handlers.
+    // The server build of this module exists only for the native component-test
+    // tier, which has no session — identity-requiring paths always fail here.
+    // Real auth is per-handler in src/api/ (crate::api::require_auth).
     Err(ServerFnError::new("Not authenticated"))
 }
 
@@ -181,25 +184,55 @@ async fn assemble_render_context(
 }
 
 // ---------------------------------------------------------------------------
-// API functions
+// API functions — server implementations
 //
-// Each function has two implementations:
-//   #[cfg(feature = "server")]       — real implementation calling db/rendering
-//   #[cfg(not(feature = "server"))]  — stub returning Err (web build; Phase 3
-//                                       will replace these with fetch calls)
+// The web build re-exports equivalents from `super::api` (gloo-net fetch calls).
 // ---------------------------------------------------------------------------
 
 // --- Auth ---
 
 #[cfg(feature = "server")]
-pub async fn check_auth() -> Result<Option<AuthenticatedUser>, ServerFnError> {
-    // Spike stub: will be a real Axum handler in Phase 2.
-    Ok(None)
+pub async fn login(
+    _username: String,
+    _password: String,
+) -> Result<AuthenticatedUser, ServerFnError> {
+    Err(ServerFnError::new("Login is handled by the /dashboard/auth/login HTTP endpoint"))
 }
 
-#[cfg(not(feature = "server"))]
+#[cfg(feature = "server")]
+pub async fn logout() -> Result<(), ServerFnError> {
+    Err(ServerFnError::new("Logout is handled by the /dashboard/auth/logout HTTP endpoint"))
+}
+
+#[cfg(feature = "server")]
+pub async fn setup(
+    _username: String,
+    _password: String,
+) -> Result<AuthenticatedUser, ServerFnError> {
+    Err(ServerFnError::new("Setup is handled by the /dashboard/auth/setup HTTP endpoint"))
+}
+
+#[cfg(feature = "server")]
+pub async fn create_user(_username: String, _password: String) -> Result<(), ServerFnError> {
+    Err(ServerFnError::new(
+        "Create user is handled by the /dashboard/auth/create-user HTTP endpoint",
+    ))
+}
+
+#[cfg(feature = "server")]
+pub async fn change_password(
+    _current_password: String,
+    _new_password: String,
+) -> Result<(), ServerFnError> {
+    Err(ServerFnError::new(
+        "Change password is handled by the /dashboard/auth/change-password HTTP endpoint",
+    ))
+}
+
+#[cfg(feature = "server")]
 pub async fn check_auth() -> Result<Option<AuthenticatedUser>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
+    // Native test tier has no session; the real handler is src/api/auth.rs.
+    Ok(None)
 }
 
 #[cfg(feature = "server")]
@@ -208,11 +241,6 @@ pub async fn check_needs_setup() -> Result<bool, ServerFnError> {
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(count == 0)
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn check_needs_setup() -> Result<bool, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 // --- Users ---
@@ -229,11 +257,6 @@ pub async fn get_all_users() -> Result<Vec<AuthenticatedUser>, ServerFnError> {
             username: u.username,
         })
         .collect())
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_all_users() -> Result<Vec<AuthenticatedUser>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -253,27 +276,7 @@ pub async fn delete_user(user_id: i64) -> Result<(), ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn delete_user(_user_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 // --- Screen previews ---
-
-#[cfg(feature = "server")]
-pub async fn get_screen_preview(device_id: i64) -> Result<String, ServerFnError> {
-    use base64::Engine;
-    let render_context = get_render_context(device_id).await?;
-    match crate::device::renderer::render_screen(&render_context).await {
-        Ok(bmp_bytes) => Ok(base64::engine::general_purpose::STANDARD.encode(&bmp_bytes)),
-        Err(e) => Err(ServerFnError::new(format!("{:?}", e))),
-    }
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_screen_preview(_device_id: i64) -> Result<String, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
 
 #[cfg(feature = "server")]
 pub async fn get_screen_preview_for_template(
@@ -288,14 +291,6 @@ pub async fn get_screen_preview_for_template(
     Ok(base64::engine::general_purpose::STANDARD.encode(&bmp_bytes))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn get_screen_preview_for_template(
-    _device_id: i64,
-    _template_id: i64,
-) -> Result<String, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn get_template_preview(render_context: RenderContext) -> Result<String, ServerFnError> {
     use base64::Engine;
@@ -305,49 +300,13 @@ pub async fn get_template_preview(render_context: RenderContext) -> Result<Strin
     Ok(base64::engine::general_purpose::STANDARD.encode(&bmp_bytes))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn get_template_preview(
-    _render_context: RenderContext,
-) -> Result<String, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 // --- Templates ---
-
-#[cfg(feature = "server")]
-pub async fn get_default_template() -> Result<Template, ServerFnError> {
-    crate::db::get_default_template()
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_default_template() -> Result<Template, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
 
 #[cfg(feature = "server")]
 pub async fn get_templates() -> Result<Vec<Template>, ServerFnError> {
     crate::db::get_templates()
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_templates() -> Result<Vec<Template>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
-#[cfg(feature = "server")]
-pub async fn get_template_by_id(id: i64) -> Result<Template, ServerFnError> {
-    crate::db::get_template_by_id(id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_template_by_id(_id: i64) -> Result<Template, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -357,21 +316,11 @@ pub async fn create_template(name: String, content: String) -> Result<Template, 
         .map_err(|e| ServerFnError::new(format!("Unable to create template: {:?}", e)))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn create_template(_name: String, _content: String) -> Result<Template, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn copy_template(id: i64) -> Result<Template, ServerFnError> {
     crate::db::copy_template(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to copy template: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn copy_template(_id: i64) -> Result<Template, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -381,25 +330,11 @@ pub async fn delete_template(id: i64) -> Result<(), ServerFnError> {
         .map_err(|e| ServerFnError::new(format!("Unable to delete template: {:?}", e)))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn delete_template(_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn save_template(id: i64, name: String, content: String) -> Result<(), ServerFnError> {
     crate::db::update_template(id, &name, &content)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to save template: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn save_template(
-    _id: i64,
-    _name: String,
-    _content: String,
-) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 // --- Devices ---
@@ -411,33 +346,11 @@ pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn get_devices() -> Result<Vec<Device>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
-#[cfg(feature = "server")]
-pub async fn get_device_by_id(id: i64) -> Result<Device, ServerFnError> {
-    crate::db::get_device(id)
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_device_by_id(_id: i64) -> Result<Device, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn get_device_logs(id: i64) -> Result<Vec<DeviceLog>, ServerFnError> {
     crate::db::get_device_logs(id, 100)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_device_logs(_id: i64) -> Result<Vec<DeviceLog>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -447,24 +360,11 @@ pub async fn delete_device(id: i64) -> Result<(), ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn delete_device(_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn update_device_template(device_id: i64, template_id: i64) -> Result<(), ServerFnError> {
     crate::db::update_device_template(device_id, template_id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to update device template: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn update_device_template(
-    _device_id: i64,
-    _template_id: i64,
-) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -475,14 +375,6 @@ pub async fn update_device_maximum_compatibility(
     crate::db::update_device_maximum_compatibility(device_id, maximum_compatibility)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to update maximum compatibility: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn update_device_maximum_compatibility(
-    _device_id: i64,
-    _maximum_compatibility: bool,
-) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 // --- Render contexts ---
@@ -496,11 +388,6 @@ pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError>
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     assemble_render_context(device, template).await
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_render_context(_id: i64) -> Result<RenderContext, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -517,14 +404,6 @@ pub async fn get_render_context_for_template(
     assemble_render_context(device, template).await
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn get_render_context_for_template(
-    _device_id: i64,
-    _template_id: i64,
-) -> Result<RenderContext, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContext, ServerFnError> {
     let device = Device::virtual_device();
@@ -532,11 +411,6 @@ pub async fn get_virtual_render_context(template_id: i64) -> Result<RenderContex
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     assemble_render_context(device, template).await
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_virtual_render_context(_template_id: i64) -> Result<RenderContext, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 // --- Template context / variables ---
@@ -554,30 +428,7 @@ pub async fn get_template_context(
     Ok(vars)
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn get_template_context(
-    _render_context: RenderContext,
-) -> Result<Vec<TemplateVar>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 // --- Prometheus ---
-
-#[cfg(feature = "server")]
-pub async fn get_prometheus_queries_for_template(
-    template_id: i64,
-) -> Result<Vec<PrometheusQuery>, ServerFnError> {
-    crate::db::get_prometheus_queries(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_prometheus_queries_for_template(
-    _template_id: i64,
-) -> Result<Vec<PrometheusQuery>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
 
 #[cfg(feature = "server")]
 pub async fn save_prometheus_query(pq: PrometheusQuery) -> Result<PrometheusQuery, ServerFnError> {
@@ -598,21 +449,11 @@ pub async fn save_prometheus_query(pq: PrometheusQuery) -> Result<PrometheusQuer
     }
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn save_prometheus_query(_pq: PrometheusQuery) -> Result<PrometheusQuery, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn delete_prometheus_query(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_prometheus_query(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to delete query: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn delete_prometheus_query(_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -659,89 +500,7 @@ pub async fn execute_prometheus_query(
     }
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn execute_prometheus_query(
-    _query: PrometheusQuery,
-) -> Result<PrometheusQueryResult, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
-#[cfg(feature = "server")]
-pub async fn execute_prometheus_queries(
-    queries: Vec<PrometheusQuery>,
-) -> Result<Vec<PrometheusQueryResult>, ServerFnError> {
-    use crate::models::PrometheusMetricResult;
-    let mut results = Vec::with_capacity(queries.len());
-    for query in &queries {
-        use crate::models::server::http_client;
-        let client =
-            match prometheus_http_query::Client::from(http_client().clone(), query.addr.as_str()) {
-                Ok(c) => c,
-                Err(e) => {
-                    results.push(PrometheusQueryResult {
-                        query_name: query.name.clone(),
-                        results: vec![],
-                        error: Some(format!("Invalid prometheus address: {e}")),
-                    });
-                    continue;
-                }
-            };
-        match client.query(query.query.as_str()).get().await {
-            Ok(response) => {
-                let metrics = response
-                    .data()
-                    .as_vector()
-                    .map(|v| {
-                        v.iter()
-                            .map(|x| PrometheusMetricResult {
-                                labels: x.metric().clone(),
-                                value: x.sample().value(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                results.push(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: metrics,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                results.push(PrometheusQueryResult {
-                    query_name: query.name.clone(),
-                    results: vec![],
-                    error: Some(e.to_string()),
-                });
-            }
-        }
-    }
-    Ok(results)
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn execute_prometheus_queries(
-    _queries: Vec<PrometheusQuery>,
-) -> Result<Vec<PrometheusQueryResult>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 // --- Range queries ---
-
-#[cfg(feature = "server")]
-pub async fn get_range_queries_for_template(
-    template_id: i64,
-) -> Result<Vec<RangeQuery>, ServerFnError> {
-    crate::db::get_range_queries(template_id)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Unable to query db: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn get_range_queries_for_template(
-    _template_id: i64,
-) -> Result<Vec<RangeQuery>, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
 
 #[cfg(feature = "server")]
 pub async fn save_range_query(rq: RangeQuery) -> Result<RangeQuery, ServerFnError> {
@@ -775,21 +534,11 @@ pub async fn save_range_query(rq: RangeQuery) -> Result<RangeQuery, ServerFnErro
     }
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn save_range_query(_rq: RangeQuery) -> Result<RangeQuery, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn delete_range_query(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_range_query(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to delete range query: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn delete_range_query(_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -806,11 +555,6 @@ pub async fn execute_range_query(query: RangeQuery) -> Result<RangeQueryResult, 
             error: Some(e),
         }),
     }
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn execute_range_query(_query: RangeQuery) -> Result<RangeQueryResult, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 // --- HTTP sources ---
@@ -837,21 +581,11 @@ pub async fn save_http_source(source: HttpSource) -> Result<HttpSource, ServerFn
     }
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn save_http_source(_source: HttpSource) -> Result<HttpSource, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 #[cfg(feature = "server")]
 pub async fn delete_http_source(id: i64) -> Result<(), ServerFnError> {
     crate::db::delete_http_source(id)
         .await
         .map_err(|e| ServerFnError::new(format!("Unable to delete http source: {:?}", e)))
-}
-
-#[cfg(not(feature = "server"))]
-pub async fn delete_http_source(_id: i64) -> Result<(), ServerFnError> {
-    Err(ServerFnError::new("not connected"))
 }
 
 #[cfg(feature = "server")]
@@ -883,11 +617,6 @@ pub async fn execute_http_source(source: HttpSource) -> Result<HttpSourceResult,
     }
 }
 
-#[cfg(not(feature = "server"))]
-pub async fn execute_http_source(_source: HttpSource) -> Result<HttpSourceResult, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
-
 // --- Server info ---
 
 #[cfg(feature = "server")]
@@ -903,10 +632,12 @@ pub async fn get_server_info() -> Result<ServerInfo, ServerFnError> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Web build: re-export fetch implementations from api module
+// ---------------------------------------------------------------------------
+
 #[cfg(not(feature = "server"))]
-pub async fn get_server_info() -> Result<ServerInfo, ServerFnError> {
-    Err(ServerFnError::new("not connected"))
-}
+pub use super::api::*;
 
 // ---------------------------------------------------------------------------
 // Tests

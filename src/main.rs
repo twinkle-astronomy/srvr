@@ -1,4 +1,6 @@
 #[cfg(feature = "server")]
+mod api;
+#[cfg(feature = "server")]
 mod auth;
 #[cfg(feature = "server")]
 mod db;
@@ -49,11 +51,21 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
     let auth_api = crate::auth::router();
 
     // Serve the WASM bundle and static assets.
-    // In dev: dx sets DIOXUS_ASSET_DIR to the hot-reload dist folder.
-    // In prod: falls back to ./dist built by `dx build --release`.
-    let asset_dir = std::env::var("DIOXUS_ASSET_DIR").unwrap_or_else(|_| "dist".to_string());
+    // Priority: DIOXUS_ASSET_DIR env var → dx debug build → dx release build → dist/
+    let asset_dir = std::env::var("DIOXUS_ASSET_DIR").unwrap_or_else(|_| {
+        let candidates = [
+            "target/dx/srvr/debug/web/public",
+            "target/dx/srvr/release/web/public",
+            "dist",
+        ];
+        candidates
+            .iter()
+            .find(|p| std::path::Path::new(p).join("index.html").exists())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "dist".to_string())
+    });
     let spa = ServeDir::new(&asset_dir)
-        .not_found_service(ServeFile::new(format!("{asset_dir}/index.html")));
+        .fallback(ServeFile::new(format!("{asset_dir}/index.html")));
 
     axum::Router::new()
         .route(
@@ -62,6 +74,7 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
         )
         .merge(device_api)
         .merge(auth_api)
+        .merge(crate::api::router())
         .fallback_service(spa)
         .layer(auth_layer)
         .layer(TraceLayer::new_for_http())

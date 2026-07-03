@@ -37,10 +37,12 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 ### Infrastructure
 - Native frontend test harness (`src/frontend/test_harness.rs`): renders Dioxus
   components through the real dioxus-core runtime and asserts on SSR output, run
-  under `cargo test --features server` (no browser). A browser tier was
-  investigated but is blocked by the fullstack/hydration build — see
-  [completed/20260628-frontend-test-harness](completed/20260628-frontend-test-harness.md)
-  and the [csr-rpc-conversion](ideas/csr-rpc-conversion.md) idea.
+  under `cargo test --features server` (no browser) — see
+  [completed/20260628-frontend-test-harness](completed/20260628-frontend-test-harness.md).
+- Browser E2E tier (`tests/browser_e2e.rs`): drives the real WASM dashboard in
+  headless Chromium (docker-compose `chrome` service) against a spawned server,
+  covering login, user management, password change, and device/template editing —
+  see [completed/20260702-csr-rpc-conversion](completed/20260702-csr-rpc-conversion.md).
 - SQLite with WAL mode; schema managed via sqlx migrations
 - Session-based auth with Argon2 password hashing
 - Optional TLS: manual PEM certs or Let's Encrypt ACME
@@ -49,7 +51,7 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 
 ## Architecture patterns
 
-- **Axum + Dioxus Fullstack**: server-side rendering with WASM hydration; server functions as the RPC layer
+- **Axum + Dioxus CSR**: the browser renders the dashboard from scratch (no SSR/hydration); Axum serves the WASM bundle and a plain JSON API under `/dashboard/` as the data layer
 - **Global AppStore**: Dioxus Signals shared across the frontend via context
 - **Feature-gated compilation**: `server` feature for backend code, `web` feature for WASM code
 - **OnceLock pool**: single SQLite connection pool initialized at startup, accessed via sync `db::get()`

@@ -20,8 +20,20 @@ services:
       - DATABASE_URL=sqlite:///app/.data/data.db
       - TZ=America/Los_Angeles
       - OLLAMA_HOST=xavier.lan:11434
+      # Browser E2E tests (tests/browser_e2e.rs) drive the `chrome` service.
+      - WEBDRIVER_URL=http://chrome:4444
     command:
       "sleep infinity"
+
+  # Headless Chromium exposed as a WebDriver endpoint for the browser E2E tests.
+  # Its own image (Dockerfile `chrome` stage) so no browser ships in the dev
+  # image; reachable on the compose network as `chrome:4444`.
+  chrome:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: chrome
+    init: true
   srvr-published:
     profiles: ["published"]
     sysctls:

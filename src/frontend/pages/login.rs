@@ -1,11 +1,18 @@
 use dioxus::prelude::*;
 
-use crate::frontend::Route;
-use crate::frontend::server_fns::check_needs_setup;
+use crate::frontend::{
+    Route,
+    server_fns::{check_needs_setup, login},
+};
 
 #[component]
 pub fn Login() -> Element {
     let mut needs_setup = use_signal(|| None::<bool>);
+    let mut username = use_signal(String::new);
+    let mut password = use_signal(String::new);
+    let mut error = use_signal(|| None::<String>);
+    let mut submitting = use_signal(|| false);
+    let mut logged_in = use_signal(|| false);
     let nav = navigator();
 
     use_effect(move || {
@@ -21,7 +28,10 @@ pub fn Login() -> Element {
         return rsx! { p { class: "text-gray-400 text-center mt-20", "Redirecting to setup..." } };
     }
 
-    let error_msg = use_signal(|| None::<&'static str>);
+    if logged_in() {
+        nav.push(Route::Dashboard {});
+        return rsx! { p { class: "text-gray-400 text-center mt-20", "Redirecting..." } };
+    }
 
     rsx! {
         div { class: "min-h-screen flex items-center justify-center bg-gray-50",
@@ -32,19 +42,35 @@ pub fn Login() -> Element {
                         p { class: "text-gray-500 mt-1 text-sm", "Sign in to your account" }
                     }
 
-                    if let Some(msg) = error_msg() {
+                    if let Some(ref msg) = error() {
                         div { class: "mb-4 p-3 bg-red-50 border border-red-200 rounded-lg",
                             p { class: "text-sm text-red-600", "{msg}" }
                         }
                     }
 
                     form {
-                        action: "/auth/login",
-                        method: "POST",
                         class: "space-y-4",
+                        onsubmit: move |event| {
+                            event.prevent_default();
+                            let u = username();
+                            let p = password();
+                            error.set(None);
+                            submitting.set(true);
+                            spawn(async move {
+                                match login(u, p).await {
+                                    Ok(_) => logged_in.set(true),
+                                    Err(e) => error.set(Some(e.to_string())),
+                                }
+                                submitting.set(false);
+                            });
+                        },
 
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "username", "Username" }
+                            label {
+                                class: "block text-sm font-medium text-gray-700 mb-1",
+                                r#for: "username",
+                                "Username"
+                            }
                             input {
                                 r#type: "text",
                                 id: "username",
@@ -52,11 +78,17 @@ pub fn Login() -> Element {
                                 required: true,
                                 autocomplete: "username",
                                 class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                                value: "{username()}",
+                                oninput: move |e| username.set(e.value()),
                             }
                         }
 
                         div {
-                            label { class: "block text-sm font-medium text-gray-700 mb-1", r#for: "password", "Password" }
+                            label {
+                                class: "block text-sm font-medium text-gray-700 mb-1",
+                                r#for: "password",
+                                "Password"
+                            }
                             input {
                                 r#type: "password",
                                 id: "password",
@@ -64,13 +96,16 @@ pub fn Login() -> Element {
                                 required: true,
                                 autocomplete: "current-password",
                                 class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                                value: "{password()}",
+                                oninput: move |e| password.set(e.value()),
                             }
-        }
+                        }
 
                         button {
                             r#type: "submit",
-                            class: "w-full px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
-                            "Sign in"
+                            disabled: submitting(),
+                            class: "w-full px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50",
+                            if submitting() { "Signing in..." } else { "Sign in" }
                         }
                     }
                 }
