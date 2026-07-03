@@ -75,6 +75,9 @@ WORKDIR /
 
 ENV IP=0.0.0.0
 ENV PORT=8080
+# dx bundle's web root lives under dist/public; be explicit so the server
+# doesn't depend on the working directory to find it.
+ENV DIOXUS_ASSET_DIR=/dist/public
 
 CMD ["/dist/server"]
 

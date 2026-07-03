@@ -51,19 +51,29 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
     let auth_api = crate::auth::router();
 
     // Serve the WASM bundle and static assets.
-    // Priority: DIOXUS_ASSET_DIR env var → dx debug build → dx release build → dist/
+    // Priority: DIOXUS_ASSET_DIR env var → dx debug/release build → `dx bundle`
+    // output (dist/public — the publish image also sets DIOXUS_ASSET_DIR there).
     let asset_dir = std::env::var("DIOXUS_ASSET_DIR").unwrap_or_else(|_| {
         let candidates = [
             "target/dx/srvr/debug/web/public",
             "target/dx/srvr/release/web/public",
+            "dist/public",
             "dist",
         ];
         candidates
             .iter()
             .find(|p| std::path::Path::new(p).join("index.html").exists())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "dist".to_string())
+            .unwrap_or_else(|| "dist/public".to_string())
     });
+    if std::path::Path::new(&asset_dir).join("index.html").exists() {
+        tracing::info!("serving dashboard assets from {asset_dir}");
+    } else {
+        tracing::error!(
+            "no WASM bundle at {asset_dir} — the dashboard will 404. Build one \
+             (`dx build --platform web` / `dx bundle`) or set DIOXUS_ASSET_DIR"
+        );
+    }
     // The hashed bundle and assets are served by ServeDir services that 404 on
     // a miss — a stale cached page requesting an old hashed bundle must get a
     // clean 404, not index.html with a 200 (the browser would then choke on
