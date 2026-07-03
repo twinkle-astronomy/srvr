@@ -54,8 +54,11 @@ normal `cargo test --features server`.
 The plan was a `wasm-bindgen-test` tier for "does a top-level page work" in a real
 browser. The **toolchain was made to work end-to-end** — the wasm test compiled
 and executed in headless Chromium — but the tier is **blocked by hydration** and
-was not shipped. The scaffolding is preserved on the `csr-rpc-conversion` branch
-(WIP commit), not in `main`.
+was not shipped. The wasm-bindgen-test scaffolding (WIP commit `9d0f75c`) was
+never merged and was ultimately **superseded**: the
+[csr-rpc-conversion](20260702-csr-rpc-conversion.md) project removed the
+hydration blocker and shipped a fantoccini-driven browser E2E tier
+(`tests/browser_e2e.rs`) covering full user journeys instead of isolated mounts.
 
 ### The blocker
 
