@@ -1,7 +1,7 @@
-# PR flow: run the full test suite on every push to a PR, then publish a
-# multi-arch image tagged with the PR's branch name. When the PR closes
-# (merged or abandoned) the branch tag is deleted from ghcr — durable images
-# come from the v* release flow (docker-publish.yml).
+# PR flow: on every push to a PR, run the full test suite and (in parallel)
+# publish a multi-arch image tagged with the PR's branch name. When the PR
+# closes (merged or abandoned) the branch tag is deleted from ghcr — durable
+# images come from the v* release flow (docker-publish.yml).
 name: PR
 
 on:
@@ -59,6 +59,10 @@ jobs:
         if: always()
         run: docker compose down --remove-orphans
 
+  # Deliberately NOT gated on the test job (`needs: test`): the image is
+  # published even when tests are red, so reviewers can try out a PR build
+  # when building locally isn't an option. Check the test job's status before
+  # trusting a build.
   image:
     if: github.event.action != 'closed'
     permissions:
@@ -66,8 +70,9 @@ jobs:
       packages: write
     uses: ./.github/workflows/build-image.yml
     with:
-      # metadata-action sanitizes the branch name into a valid tag
-      # (lowercased, invalid chars -> '-'); cleanup below mirrors that.
+      # metadata-action sanitizes the branch name into a valid tag (invalid
+      # char sequences -> '-'); cleanup below derives the identical tag by
+      # running the same action on the same input.
       tags: type=raw,value=${{ github.head_ref }}
 
   cleanup:
@@ -77,19 +82,21 @@ jobs:
       packages: write
     steps:
       - name: Compute image tag for branch
-        id: tag
-        # Mirror docker/metadata-action's sanitization of the raw branch name.
-        run: |
-          tag="${GITHUB_HEAD_REF,,}"
-          tag="$(echo "$tag" | sed 's/[^a-z0-9._-]/-/g')"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        id: meta
+        # Same action + same input as the image job, so the computed tag is
+        # identical by construction (no hand-mirrored sanitization rules).
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=raw,value=${{ github.head_ref }}
 
       - name: Delete branch image tag from ghcr
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         # Deletes the manifest list and its orphaned per-arch children while
         # keeping digests referenced by other tags (release images).
-        # Tolerate a missing tag: PRs whose tests never passed push no image.
+        # Tolerate a missing tag: the image push may have failed or been
+        # cancelled before completing.
         continue-on-error: true
         with:
-          delete-tags: ${{ steps.tag.outputs.tag }}
+          delete-tags: ${{ steps.meta.outputs.version }}
           token: ${{ secrets.GITHUB_TOKEN }}
