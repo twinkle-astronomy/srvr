@@ -46,7 +46,9 @@ COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \
     NO_DOWNLOADS=1 dx bundle --release --debug-symbols false && \
-    cp -r /app/dist /home/dev/dist-output
+    cp -r /app/dist /home/dev/dist-output && \
+    cargo build --features server --message-format=short --color never --release && \
+    cp target/release/srvr /home/dev/dist-output/server
 
 FROM debian:trixie-slim AS publish
 RUN apt-get update && apt-get install -y \
