@@ -22,6 +22,7 @@ services:
       - OLLAMA_HOST=xavier.lan:11434
       # Browser E2E tests (tests/browser_e2e.rs) drive the `chrome` service.
       - WEBDRIVER_URL=http://chrome:4444
+      - IMAGE_SIGNATURE_SECRET=dev
     command:
       "sleep infinity"
 
@@ -59,6 +60,7 @@ services:
       - PROMETHEUS_URL=http://prometheus:9090
       - DATABASE_URL=sqlite:///data/data.db
       - TZ=America/Los_Angeles
+      - IMAGE_SIGNATURE_SECRET=something_secret
       ## Manual TLS — provide cert and key files:
       # - TLS_CERT_PATH=/certs/fullchain.pem
       # - TLS_KEY_PATH=/certs/privkey.pem
