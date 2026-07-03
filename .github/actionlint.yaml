@@ -1,0 +1,7 @@
+# Self-hosted ARC runner labels used by this repo's workflows, so actionlint
+# recognizes them instead of flagging unknown-label errors.
+self-hosted-runner:
+  labels:
+    - arc-runner-amd64
+    - arc-runner-arm64
+    - arc-runner-armv7
