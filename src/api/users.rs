@@ -65,4 +65,55 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn authenticated_user_can_list_users() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let response = router
+            .oneshot(
+                Request::get("/users")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let users: Vec<crate::models::AuthenticatedUser> = serde_json::from_slice(&body).unwrap();
+        assert!(
+            users.iter().any(|u| u.username.starts_with("api_test_user_")),
+            "list should contain the logged-in test user"
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_yourself_is_rejected() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        // Identify the session's own user via the auth endpoint.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/auth")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let me: Option<crate::models::AuthenticatedUser> = serde_json::from_slice(&body).unwrap();
+        let me = me.expect("session should resolve to a user");
+
+        let response = router
+            .oneshot(
+                Request::delete(format!("/users/{}", me.id))
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }

@@ -100,4 +100,59 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn saved_query_appears_in_template_list() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let template = crate::db::create_template(
+            &format!("api_range_tpl_{}", std::process::id()),
+            "<svg/>",
+        )
+        .await
+        .expect("create template");
+        let name = format!("api_range_q_{}", std::process::id());
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/range")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": null,
+                            "name": name,
+                            "template_id": template.id,
+                            "addr": "http://prometheus:9090",
+                            "query": "up",
+                            "duration": "1h",
+                            "step": "60s",
+                            "created_at": "2026-01-01T00:00:00",
+                            "updated_at": "2026-01-01T00:00:00"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "save: {}", response.status());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let saved: crate::models::RangeQuery = serde_json::from_slice(&body).unwrap();
+        assert!(saved.id.is_some(), "save should assign an id");
+
+        let response = router
+            .oneshot(
+                Request::get(format!("/templates/{}/range", template.id))
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let queries: Vec<crate::models::RangeQuery> = serde_json::from_slice(&body).unwrap();
+        assert!(queries.iter().any(|q| q.name == name));
+    }
 }

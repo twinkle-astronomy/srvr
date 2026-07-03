@@ -21,7 +21,7 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
     use axum_prometheus::PrometheusMetricLayer;
     use tower_http::{
         cors::{Any, CorsLayer},
-        services::{ServeDir, ServeFile},
+        services::ServeDir,
         trace::TraceLayer,
     };
 
@@ -64,8 +64,38 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
             .map(|s| s.to_string())
             .unwrap_or_else(|| "dist".to_string())
     });
-    let spa = ServeDir::new(&asset_dir)
-        .fallback(ServeFile::new(format!("{asset_dir}/index.html")));
+    // The hashed bundle and assets are served by ServeDir services that 404 on
+    // a miss — a stale cached page requesting an old hashed bundle must get a
+    // clean 404, not index.html with a 200 (the browser would then choke on
+    // text/html where it expected JS/WASM). Everything else falls back to
+    // index.html for the client-side router, except file-like paths and
+    // unmatched API paths, which also 404.
+    let index_html = std::sync::Arc::new(format!("{asset_dir}/index.html"));
+    let spa_fallback = move |uri: axum::http::Uri| {
+        let index_html = index_html.clone();
+        async move {
+            use axum::response::IntoResponse;
+            let path = uri.path();
+            let is_index = path == "/" || path == "/index.html";
+            let file_like =
+                !is_index && path.rsplit('/').next().is_some_and(|seg| seg.contains('.'));
+            if file_like || path.starts_with("/api/") || path.starts_with("/dashboard/") {
+                return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+            }
+            match tokio::fs::read(index_html.as_str()).await {
+                Ok(bytes) => (
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    bytes,
+                )
+                    .into_response(),
+                Err(_) => (
+                    axum::http::StatusCode::NOT_FOUND,
+                    "index.html not found — build the WASM bundle (dx build --platform web)",
+                )
+                    .into_response(),
+            }
+        }
+    };
 
     axum::Router::new()
         .route(
@@ -75,7 +105,9 @@ async fn build_router(tls_enabled: bool) -> axum::Router {
         .merge(device_api)
         .merge(auth_api)
         .merge(crate::api::router())
-        .fallback_service(spa)
+        .nest_service("/assets", ServeDir::new(format!("{asset_dir}/assets")))
+        .nest_service("/wasm", ServeDir::new(format!("{asset_dir}/wasm")))
+        .fallback(spa_fallback)
         .layer(auth_layer)
         .layer(TraceLayer::new_for_http())
         .layer(prometheus_layer)

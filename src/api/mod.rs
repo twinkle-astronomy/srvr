@@ -16,6 +16,7 @@ use serde_json::json;
 use crate::auth::AuthSession;
 use crate::models::{Device, RenderContext, Template};
 
+#[derive(Debug)]
 pub struct ApiError(StatusCode, String);
 
 impl ApiError {
@@ -38,9 +39,21 @@ impl ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        match e {
+        match &e {
             sqlx::Error::RowNotFound => Self(StatusCode::NOT_FOUND, "Not found".to_string()),
-            _ => Self(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            sqlx::Error::Database(db)
+                if db.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+            {
+                Self(StatusCode::CONFLICT, "Already exists".to_string())
+            }
+            // Don't leak driver/database internals to the client; log them.
+            _ => {
+                tracing::error!("database error: {e}");
+                Self(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+            }
         }
     }
 }
@@ -69,6 +82,15 @@ pub(crate) async fn assemble_render_context(
         range_queries,
         http_sources,
     })
+}
+
+/// Full render context for a device (device + its assigned template + data
+/// sources). Shared by the dashboard handlers and the device screen endpoint
+/// (`/render/screen.bmp` in `device/api.rs`).
+pub(crate) async fn render_context_for_device(id: i64) -> Result<RenderContext, ApiError> {
+    let device = crate::db::get_device(id).await?;
+    let template = crate::db::get_template_for_device(id).await?;
+    assemble_render_context(device, template).await
 }
 
 pub fn router() -> axum::Router {
@@ -100,5 +122,54 @@ pub(crate) mod test_support {
         let auth_layer =
             axum_login::AuthManagerLayerBuilder::new(crate::auth::Backend, session_layer).build();
         routes.layer(auth_layer)
+    }
+
+    /// Success-path fixture: merge the JSON auth endpoints into `routes`, wrap
+    /// with sessions, create a fresh (process-unique) user in the shared test
+    /// DB, and log in through the real login handler. Returns the wrapped
+    /// router and the session cookie to send on authenticated requests — both
+    /// are needed together, since the cookie only exists in this router's
+    /// in-memory session store.
+    pub(crate) async fn login_session(routes: axum::Router) -> (axum::Router, String) {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+
+        crate::db::test_support::init_test_db().await;
+
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let username = format!(
+            "api_test_user_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        let hash = crate::auth::hash_password("test-pw").expect("hash password");
+        crate::db::create_user(&username, &hash).await.expect("create test user");
+
+        let router = auth_router(routes.merge(crate::api::auth::router())).await;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"username": username, "password": "test-pw"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "login failed: {}", response.status());
+        let cookie = response
+            .headers()
+            .get("set-cookie")
+            .expect("login should set a session cookie")
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        (router, cookie)
     }
 }

@@ -104,4 +104,56 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn saved_source_appears_in_template_list() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let template = crate::db::create_template(
+            &format!("api_http_tpl_{}", std::process::id()),
+            "<svg/>",
+        )
+        .await
+        .expect("create template");
+        let name = format!("api_http_src_{}", std::process::id());
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/http-sources")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": null,
+                            "name": name,
+                            "template_id": template.id,
+                            "url": "http://example.com/data.json",
+                            "created_at": "2026-01-01T00:00:00",
+                            "updated_at": "2026-01-01T00:00:00"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "save: {}", response.status());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let saved: crate::models::HttpSource = serde_json::from_slice(&body).unwrap();
+        assert!(saved.id.is_some(), "save should assign an id");
+
+        let response = router
+            .oneshot(
+                Request::get(format!("/templates/{}/http-sources", template.id))
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let sources: Vec<crate::models::HttpSource> = serde_json::from_slice(&body).unwrap();
+        assert!(sources.iter().any(|s| s.name == name));
+    }
 }

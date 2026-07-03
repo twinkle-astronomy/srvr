@@ -19,16 +19,51 @@ use crate::{
 };
 
 // --- Private fetch helpers ---
+//
+// Non-2xx responses carry the ApiError shape `{"error": "..."}` (see
+// `ApiError::into_response` in src/api/mod.rs). Surface that message so the
+// UI shows e.g. "Cannot delete the last user" rather than a bare status code.
+
+#[derive(serde::Deserialize)]
+struct ErrorBody {
+    error: String,
+}
+
+/// Send a built request; on non-2xx, turn the response into a `ServerFnError`
+/// carrying the server's error message (falling back to `HTTP <status>`).
+async fn send_checked(
+    req: gloo_net::http::Request,
+) -> Result<gloo_net::http::Response, ServerFnError> {
+    let resp = req.send().await.map_err(|e| ServerFnError::new(e.to_string()))?;
+    if resp.ok() {
+        return Ok(resp);
+    }
+    let status = resp.status();
+    Err(match resp.json::<ErrorBody>().await {
+        Ok(body) => ServerFnError::new(body.error),
+        Err(_) => ServerFnError::new(format!("HTTP {status}")),
+    })
+}
+
+fn build(req: gloo_net::http::RequestBuilder) -> Result<gloo_net::http::Request, ServerFnError> {
+    req.build().map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+fn with_json<B: serde::Serialize>(
+    req: gloo_net::http::RequestBuilder,
+    body: &B,
+) -> Result<gloo_net::http::Request, ServerFnError> {
+    req.json(body).map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+async fn parse<T: for<'de> serde::Deserialize<'de>>(
+    resp: gloo_net::http::Response,
+) -> Result<T, ServerFnError> {
+    resp.json().await.map_err(|e| ServerFnError::new(e.to_string()))
+}
 
 async fn get<T: for<'de> serde::Deserialize<'de>>(path: &str) -> Result<T, ServerFnError> {
-    let resp = gloo_net::http::Request::get(path)
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    resp.json().await.map_err(|e| ServerFnError::new(e.to_string()))
+    parse(send_checked(build(gloo_net::http::Request::get(path))?).await?).await
 }
 
 async fn post<B, T>(path: &str, body: &B) -> Result<T, ServerFnError>
@@ -36,75 +71,35 @@ where
     B: serde::Serialize,
     T: for<'de> serde::Deserialize<'de>,
 {
-    let resp = gloo_net::http::Request::post(path)
-        .json(body)
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    resp.json().await.map_err(|e| ServerFnError::new(e.to_string()))
+    parse(send_checked(with_json(gloo_net::http::Request::post(path), body)?).await?).await
 }
 
 async fn post_void<B: serde::Serialize>(path: &str, body: &B) -> Result<(), ServerFnError> {
-    let resp = gloo_net::http::Request::post(path)
-        .json(body)
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .send()
+    send_checked(with_json(gloo_net::http::Request::post(path), body)?)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    Ok(())
+        .map(|_| ())
 }
 
 async fn post_empty<T: for<'de> serde::Deserialize<'de>>(path: &str) -> Result<T, ServerFnError> {
-    let resp = gloo_net::http::Request::post(path)
-        .send()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    resp.json().await.map_err(|e| ServerFnError::new(e.to_string()))
+    parse(send_checked(build(gloo_net::http::Request::post(path))?).await?).await
 }
 
 async fn put_void<B: serde::Serialize>(path: &str, body: &B) -> Result<(), ServerFnError> {
-    let resp = gloo_net::http::Request::put(path)
-        .json(body)
-        .map_err(|e| ServerFnError::new(e.to_string()))?
-        .send()
+    send_checked(with_json(gloo_net::http::Request::put(path), body)?)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    Ok(())
+        .map(|_| ())
 }
 
 async fn del(path: &str) -> Result<(), ServerFnError> {
-    let resp = gloo_net::http::Request::delete(path)
-        .send()
+    send_checked(build(gloo_net::http::Request::delete(path))?)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    Ok(())
+        .map(|_| ())
 }
 
 async fn post_empty_void(path: &str) -> Result<(), ServerFnError> {
-    let resp = gloo_net::http::Request::post(path)
-        .send()
+    send_checked(build(gloo_net::http::Request::post(path))?)
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    if !resp.ok() {
-        return Err(ServerFnError::new(format!("HTTP {}", resp.status())));
-    }
-    Ok(())
+        .map(|_| ())
 }
 
 // --- Auth ---

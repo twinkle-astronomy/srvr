@@ -154,4 +154,60 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn create_then_fetch_template_round_trips() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let name = format!("api_tpl_roundtrip_{}", std::process::id());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/templates")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": name,
+                            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "create: {}", response.status());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let created: crate::models::Template = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created.name, name);
+
+        let response = router
+            .oneshot(
+                Request::get(format!("/templates/{}", created.id))
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let fetched: crate::models::Template = serde_json::from_slice(&body).unwrap();
+        assert_eq!(fetched.name, name);
+    }
+
+    #[tokio::test]
+    async fn unknown_template_returns_404() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let response = router
+            .oneshot(
+                Request::get("/templates/999999999")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

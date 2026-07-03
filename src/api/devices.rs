@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    api::{ApiError, assemble_render_context, require_auth},
+    api::{ApiError, assemble_render_context, render_context_for_device, require_auth},
     auth::AuthSession,
     models::{Device, DeviceLog, RenderContext},
 };
@@ -74,9 +74,7 @@ async fn get_render_context(
     Path(id): Path<i64>,
 ) -> Result<Json<RenderContext>, ApiError> {
     require_auth(&auth)?;
-    let device = crate::db::get_device(id).await?;
-    let template = crate::db::get_template_for_device(id).await?;
-    Ok(Json(assemble_render_context(device, template).await?))
+    Ok(Json(render_context_for_device(id).await?))
 }
 
 async fn get_render_context_for_template(
@@ -95,9 +93,7 @@ async fn get_screen_preview(
 ) -> Result<Json<String>, ApiError> {
     use base64::Engine;
     require_auth(&auth)?;
-    let device = crate::db::get_device(id).await?;
-    let template = crate::db::get_template_for_device(id).await?;
-    let ctx = assemble_render_context(device, template).await?;
+    let ctx = render_context_for_device(id).await?;
     let bmp = crate::device::renderer::render_screen(&ctx)
         .await
         .map_err(|e| ApiError::internal(format!("{e:?}")))?;
@@ -157,5 +153,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn authenticated_devices_list_returns_json() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let response = router
+            .oneshot(
+                Request::get("/devices")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        // Shared test DB: assert the shape parses, not the count.
+        let _devices: Vec<crate::models::Device> = serde_json::from_slice(&body).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unknown_device_returns_404() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let response = router
+            .oneshot(
+                Request::get("/devices/999999999")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

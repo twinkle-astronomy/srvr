@@ -185,4 +185,30 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
+
+    #[tokio::test]
+    async fn duplicate_username_returns_409_with_friendly_message() {
+        // login_session merges this module's router in, so pass an empty one.
+        let (router, cookie) =
+            crate::api::test_support::login_session(axum::Router::new()).await;
+        let name = format!("dup_user_{}", std::process::id());
+        let body = serde_json::json!({"username": name, "password": "pw"}).to_string();
+        let request = |b: String| {
+            Request::post("/auth/create-user")
+                .header("cookie", &cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(b))
+                .unwrap()
+        };
+
+        let first = router.clone().oneshot(request(body.clone())).await.unwrap();
+        assert_eq!(first.status(), StatusCode::CREATED);
+
+        let second = router.oneshot(request(body)).await.unwrap();
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        // User-facing message, not database driver internals.
+        assert_eq!(err["error"], "Already exists");
+    }
 }

@@ -337,6 +337,13 @@ async fn adding_a_user_shows_it_in_the_list() -> R {
 
         // The new user appears in the list once the store re-fetches.
         wait_for_text(&c, new_user).await?;
+
+        // Submitting the same username again surfaces the server's error
+        // message in the banner (not a bare "HTTP 409").
+        c.find(Locator::Css("#new_username")).await?.send_keys(new_user).await?;
+        c.find(Locator::Css("#new_user_password")).await?.send_keys("welcome1").await?;
+        c.find(Locator::XPath("//button[contains(., 'Create')]")).await?.click().await?;
+        wait_for_text(&c, "Already exists").await?;
         Ok(())
     }
     .await;

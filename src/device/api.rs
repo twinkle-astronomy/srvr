@@ -25,7 +25,7 @@ use crate::time::Clock;
 use crate::{
     db::{get_device_id_by_access_token, insert_device_logs},
     device::{create_device_from_headers, get_and_update_device_from_headers, renderer},
-    frontend::server_fns::get_render_context,
+    api::render_context_for_device,
     hmac::{generate_signature_bytes, validate_signature},
     models::{DeviceLog, DeviceLogEntry},
     time::RealClock,
@@ -411,7 +411,7 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
             .into_response();
     }
 
-    let render_context = match get_render_context(params.device_id).await {
+    let render_context = match render_context_for_device(params.device_id).await {
         Ok(d) => d,
         Err(e) => {
             error!("Error: {:?}", e);
