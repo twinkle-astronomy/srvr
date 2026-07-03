@@ -38,7 +38,9 @@ FROM base AS build
 USER root
 RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/* && npm install -g esbuild
 USER dev
-RUN cargo binstall -y wasm-bindgen-cli@0.2.126
+# Must match the wasm-bindgen version in Cargo.lock. --locked for the armv7
+# source-build fallback (no prebuilt binary; see bootstrap.sh).
+RUN cargo binstall -y --locked wasm-bindgen-cli@0.2.115
 COPY . /app
 RUN --mount=type=cache,target=/app/target,uid=1000,gid=1000 \
     --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \

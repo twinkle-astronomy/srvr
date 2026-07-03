@@ -30,8 +30,8 @@ jobs:
             runner: arc-runner-amd64
           - platform: linux/arm64
             runner: arc-runner-arm64
-          # - platform: linux/arm/v7
-          #   runner: arc-runner-armv7
+          - platform: linux/arm/v7
+            runner: arc-runner-armv7
     runs-on: ${{ matrix.runner }}
 
     steps:
