@@ -71,7 +71,7 @@ ENV USER=dev
 
 COPY --from=build /home/dev/dist-output /dist
 
-WORKDIR /dist
+WORKDIR /
 
 ENV IP=0.0.0.0
 ENV PORT=8080
