@@ -1,0 +1,75 @@
+# Auto-release on merge to main: when a PR is merged, compute the next version
+# tag (patch by default; a `release:minor` / `release:major` PR label bumps
+# further), create that `v*` tag on the merge commit, then dispatch
+# docker-publish.yml against the tag to build and publish the release image.
+#
+# Why the explicit dispatch: a tag created with the default GITHUB_TOKEN does
+# NOT fire docker-publish.yml's `push: tags` trigger (GitHub anti-recursion),
+# but workflow_dispatch is exempt, so we trigger it directly. This keeps
+# docker-publish.yml the single source of truth for release image tags (its
+# type=semver specs resolve X.Y.Z / X.Y / latest from the tag ref) and avoids
+# needing a PAT.
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: release            # global, not per-PR: serialize back-to-back merges
+  cancel-in-progress: false # never kill an in-flight release
+
+jobs:
+  tag-and-publish:
+    if: github.event.pull_request.merged == true
+    runs-on: arc-runner-amd64
+    permissions:
+      contents: write   # create the tag ref
+      actions: write    # dispatch docker-publish.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full tag history for `git tag --sort`
+
+      - name: Compute next version
+        id: ver
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          bump=patch
+          case ",$LABELS," in
+            *,release:major,*) bump=major ;;
+            *,release:minor,*) bump=minor ;;
+          esac
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          base=${latest:-v0.0.0}; base=${base#v}
+          IFS=. read -r MA MI PA <<<"$base"
+          case "$bump" in
+            major) MA=$((MA+1)); MI=0; PA=0 ;;
+            minor) MI=$((MI+1)); PA=0 ;;
+            patch) PA=$((PA+1)) ;;
+          esac
+          next="v${MA}.${MI}.${PA}"
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::tag $next already exists"; exit 1
+          fi
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "Next release: $next (bump=$bump, from ${latest:-<none>})"
+
+      - name: Create tag and publish release image
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.ver.outputs.next }}';
+            const sha = context.payload.pull_request.merge_commit_sha;
+            await github.rest.git.createRef({
+              owner: context.repo.owner, repo: context.repo.repo,
+              ref: `refs/tags/${tag}`, sha,
+            });
+            core.info(`Created tag ${tag} at ${sha}`);
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'docker-publish.yml', ref: tag,
+            });
+            core.info(`Dispatched docker-publish.yml against ${tag}`);
