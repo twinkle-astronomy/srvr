@@ -49,7 +49,7 @@ jobs:
         run: |
           export UID
           export GID="$(id -g)"
-          docker compose run --rm srvr bash -lc '
+          docker compose run --rm srvr bash -c '
             set -e
             dx build --platform web
             cargo test --features server
@@ -61,7 +61,6 @@ jobs:
 
   image:
     if: github.event.action != 'closed'
-    needs: test
     permissions:
       contents: read
       packages: write
