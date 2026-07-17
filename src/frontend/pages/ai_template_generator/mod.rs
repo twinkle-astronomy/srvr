@@ -12,8 +12,8 @@ use ai_types::{
 
 use crate::frontend::server_fns::{
     delete_http_source, delete_prometheus_query, delete_range_query, execute_ad_hoc_http_fetch,
-    execute_prometheus_query, execute_range_query, get_claude_api_key, get_template_context,
-    get_template_preview, get_template_preview_png, get_virtual_render_context, save_http_source,
+    execute_prometheus_query, execute_range_query, get_template_context, get_template_preview,
+    get_template_preview_png, get_virtual_render_context, has_claude_api_key, save_http_source,
     save_prometheus_query, save_range_query,
 };
 use crate::frontend::server_fns::TemplateVar;
@@ -448,7 +448,6 @@ async fn execute_tool_call(
 /// Send the current input as a user turn and drive the conversation loop.
 /// Shared by the form's `onsubmit` and the textarea's Enter-to-send handler.
 fn send_message(
-    key: String,
     render_context: Signal<Option<RenderContext>>,
     template_vars: Signal<Vec<TemplateVar>>,
     mut input: Signal<String>,
@@ -525,10 +524,8 @@ fn send_message(
             current_messages,
             MAX_ITERATIONS,
             {
-                let key = key.clone();
                 let system = system.clone();
                 move |msgs| {
-                    let key = key.clone();
                     let system = system.clone();
                     async move {
                         let request = CreateMessageRequest {
@@ -538,7 +535,7 @@ fn send_message(
                             tools: tool_definitions(),
                             messages: msgs,
                         };
-                        match ai_generator::call_anthropic_api(&key, &request).await {
+                        match ai_generator::call_anthropic_api(&request).await {
                             Ok(resp) => resp,
                             Err(e) => CreateMessageResponse {
                                 content: vec![ContentBlock::Text {
@@ -659,7 +656,10 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
     let store = use_context::<AppStore>();
     let templates = store.templates;
 
-    let mut api_key = use_signal(|| None::<Option<String>>);
+    // `None` while loading; `Some(true/false)` once we know whether the user
+    // has a key configured. Just a gate for the UI — the key itself never
+    // reaches the browser (Claude calls go through the server-side proxy).
+    let mut has_key = use_signal(|| None::<bool>);
     let mut render_context = use_signal(|| None::<RenderContext>);
     let mut template_vars = use_signal(Vec::<TemplateVar>::new);
     let messages = use_signal(Vec::<AnthropicMessage>::new);
@@ -697,7 +697,7 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
     });
 
     use_resource(move || async move {
-        api_key.set(Some(get_claude_api_key().await.unwrap_or(None)));
+        has_key.set(Some(has_claude_api_key().await.unwrap_or(false)));
         if let Ok(ctx) = get_virtual_render_context(id).await {
             if let Ok(vars) = get_template_context(ctx.clone()).await {
                 template_vars.set(vars);
@@ -805,18 +805,18 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
             }
         }
 
-        match api_key() {
+        match has_key() {
             None => rsx! {
                 p { class: "text-gray-400 text-sm", "Loading..." }
             },
-            Some(None) => rsx! {
+            Some(false) => rsx! {
                 p { class: "text-gray-500 text-sm",
                     "No Claude API key configured — add yours on the "
                     Link { to: super::super::Route::Users {}, class: "text-blue-600 hover:underline", "Users" }
                     " page."
                 }
             },
-            Some(Some(key)) => rsx! {
+            Some(true) => rsx! {
                 div { class: "flex flex-wrap gap-6",
                     div {
                         class: "flex-1 min-w-[400px] flex flex-col bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden",
@@ -856,16 +856,13 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
                         }
                         form {
                             class: "border-t border-gray-100 p-3 flex gap-2",
-                            onsubmit: {
-                                let key = key.clone();
-                                move |event: FormEvent| {
-                                    event.prevent_default();
-                                    send_message(
-                                        key.clone(), render_context, template_vars, input, messages,
-                                        message_times, status, proposal, preview_image, save_state,
-                                        generation,
-                                    );
-                                }
+                            onsubmit: move |event: FormEvent| {
+                                event.prevent_default();
+                                send_message(
+                                    render_context, template_vars, input, messages,
+                                    message_times, status, proposal, preview_image, save_state,
+                                    generation,
+                                );
                             },
                             textarea {
                                 class: "flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-gray-300 resize-none",
@@ -881,7 +878,7 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
                                     {
                                         event.prevent_default();
                                         send_message(
-                                            key.clone(), render_context, template_vars, input, messages,
+                                            render_context, template_vars, input, messages,
                                             message_times, status, proposal, preview_image, save_state,
                                             generation,
                                         );

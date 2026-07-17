@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::frontend::{
-    server_fns::{change_password, create_user, delete_claude_api_key, get_claude_api_key, save_claude_api_key},
+    server_fns::{change_password, create_user, delete_claude_api_key, has_claude_api_key, save_claude_api_key},
     store::AppStore,
 };
 use crate::models::AuthenticatedUser;
@@ -219,8 +219,8 @@ fn ClaudeApiKeyCard() -> Element {
     let mut submitting = use_signal(|| false);
 
     use_resource(move || async move {
-        match get_claude_api_key().await {
-            Ok(key) => key_set.set(Some(key.is_some())),
+        match has_claude_api_key().await {
+            Ok(is_set) => key_set.set(Some(is_set)),
             Err(e) => {
                 error.set(Some(e.to_string()));
                 key_set.set(Some(false));
@@ -234,7 +234,8 @@ fn ClaudeApiKeyCard() -> Element {
                 "Claude API Key"
             }
             p { class: "text-sm text-gray-500 mb-4",
-                "Used by the AI-assisted template generator to call the Claude API directly from your browser."
+                "Used by the AI-assisted template generator. The key stays on this server — "
+                "your browser's requests to Claude are proxied through it."
             }
             if let Some(ref msg) = status() {
                 div { class: "mb-4 p-3 bg-green-50 border border-green-200 rounded-lg",
@@ -289,7 +290,7 @@ fn ClaudeApiKeyCard() -> Element {
                             "Anthropic Console"
                         }
                         " (sign in, then \u{201c}Create Key\u{201d}) and paste it below. It's stored on this "
-                        "server and used only by your browser to call the Claude API directly."
+                        "server and never sent to your browser — Claude requests are proxied through the server."
                     }
                     form {
                         class: "flex items-end gap-3",

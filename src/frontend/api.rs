@@ -400,7 +400,10 @@ pub async fn execute_http_source(source: HttpSource) -> Result<HttpSourceResult,
 
 // --- Claude AI (template generation) ---
 
-pub async fn get_claude_api_key() -> Result<Option<String>, ServerFnError> {
+/// Whether the current user has a Claude API key configured. The key itself
+/// never reaches the browser — Claude calls go through the server-side
+/// `/dashboard/claude/messages` proxy, which attaches it.
+pub async fn has_claude_api_key() -> Result<bool, ServerFnError> {
     get("/dashboard/claude-api-key").await
 }
 

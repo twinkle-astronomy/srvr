@@ -141,10 +141,14 @@ struct ClaudeApiKeyBody {
     key: String,
 }
 
-async fn get_claude_api_key_json(auth: AuthSession) -> Result<Json<Option<String>>, ApiError> {
+/// Reports only whether the calling user has a key configured. The key
+/// itself never leaves the server — the browser calls Claude through the
+/// `/claude/messages` proxy (src/api/claude.rs), which attaches it
+/// server-side.
+async fn has_claude_api_key_json(auth: AuthSession) -> Result<Json<bool>, ApiError> {
     let user = require_auth(&auth)?;
     let key = crate::db::get_claude_api_key(user.id).await?;
-    Ok(Json(key))
+    Ok(Json(key.is_some()))
 }
 
 async fn save_claude_api_key_json(
@@ -177,7 +181,7 @@ pub fn router() -> axum::Router {
         .route("/server-info", get(get_server_info))
         .route(
             "/claude-api-key",
-            get(get_claude_api_key_json)
+            get(has_claude_api_key_json)
                 .put(save_claude_api_key_json)
                 .delete(delete_claude_api_key_json),
         )
@@ -258,25 +262,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_api_key_round_trip() {
+    async fn claude_api_key_round_trip_never_returns_the_key() {
         // login_session merges this module's router in, so pass an empty one.
         let (router, cookie) = crate::api::test_support::login_session(axum::Router::new()).await;
 
+        // GET reports only whether a key is configured — the key itself must
+        // never leave the server (the browser talks to Claude through the
+        // /claude/messages proxy, which attaches it server-side).
+        let read_has_key = |router: axum::Router, cookie: String| async move {
+            let response = router
+                .oneshot(
+                    Request::get("/claude-api-key")
+                        .header("cookie", &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(
+                !body.contains("sk-ant"),
+                "response must not contain the key, got: {body}"
+            );
+            serde_json::from_str::<bool>(&body).expect("body should be a bare JSON boolean")
+        };
+
         // No key set yet.
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/claude-api-key")
-                    .header("cookie", &cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(key, None);
+        assert!(!read_has_key(router.clone(), cookie.clone()).await);
 
         // Save a key.
         let response = router
@@ -294,20 +308,8 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-        // Read it back.
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/claude-api-key")
-                    .header("cookie", &cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(key, Some("sk-ant-test-key".to_string()));
+        // Configured now — but still no key material in the response.
+        assert!(read_has_key(router.clone(), cookie.clone()).await);
 
         // Delete it.
         let response = router
@@ -323,18 +325,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
         // Gone.
-        let response = router
-            .oneshot(
-                Request::get("/claude-api-key")
-                    .header("cookie", &cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(key, None);
+        assert!(!read_has_key(router, cookie).await);
     }
 
     #[tokio::test]

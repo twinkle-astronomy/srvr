@@ -1,5 +1,6 @@
 pub mod ad_hoc_fetch;
 pub mod auth;
+pub mod claude;
 pub mod devices;
 pub mod http_sources;
 pub mod prometheus;
@@ -100,6 +101,7 @@ pub fn router() -> axum::Router {
         axum::Router::new()
             .merge(ad_hoc_fetch::router())
             .merge(auth::router())
+            .merge(claude::router())
             .merge(devices::router())
             .merge(http_sources::router())
             .merge(prometheus::router())

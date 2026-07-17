@@ -227,7 +227,7 @@ native_test_stubs! {
     pub async fn delete_http_source(i64) -> ();
     pub async fn execute_http_source(HttpSource) -> HttpSourceResult;
     // Claude AI (template generation)
-    pub async fn get_claude_api_key() -> Option<String>;
+    pub async fn has_claude_api_key() -> bool;
     pub async fn save_claude_api_key(String) -> ();
     pub async fn delete_claude_api_key() -> ();
     pub async fn execute_ad_hoc_http_fetch(String) -> String;

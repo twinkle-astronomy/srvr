@@ -9,15 +9,22 @@ user saves it in place. Originated from
 
 ## What shipped
 
-- **All AI orchestration in WASM.** The browser calls `api.anthropic.com`
-  directly (`anthropic-dangerous-direct-browser-access`); the server only
-  provides key custody and the render/query endpoints the manual editor
-  already had. No server-side agent loop, no public exposure required.
+- **All AI orchestration in WASM; key custody and forwarding on the server.**
+  The agent loop, tool dispatch, and conversation state live in the browser,
+  but requests to Claude go through `POST /dashboard/claude/messages`
+  ([src/api/claude.rs](../../../src/api/claude.rs)), a thin proxy that
+  attaches the calling user's stored key and passes Anthropic's response
+  (including its error JSON) through verbatim. The key never reaches the
+  browser — XSS or a malicious extension can't exfiltrate it — and there's a
+  natural chokepoint for future audit logging or model allowlists. No
+  server-side agent loop, no public exposure required. Upstream base URL is
+  overridable via `ANTHROPIC_BASE_URL` (tests point it at a mock).
 - **Per-user Claude API key custody** (`claude_api_key` column on `users`,
-  `GET/PUT/DELETE /dashboard/claude-api-key` in
+  `PUT/DELETE /dashboard/claude-api-key` in
   [src/api/auth.rs](../../../src/api/auth.rs)), managed from the Users page
-  with instructions for getting a key from the Anthropic console. Held in WASM
-  memory only — never `localStorage`.
+  with instructions for getting a key from the Anthropic console. The GET on
+  that route reports only *whether* a key is configured (a bare boolean) —
+  no endpoint returns key material.
 - **Agentic tool loop**
   ([ai_generator.rs](../../../src/frontend/pages/ai_template_generator/ai_generator.rs)):
   `run_conversation_loop` is pure and dependency-injected (API call, tool

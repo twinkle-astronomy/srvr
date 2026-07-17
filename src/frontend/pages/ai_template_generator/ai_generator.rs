@@ -248,24 +248,26 @@ where
 
 /// Bound on how long a single Claude API round trip is allowed to take.
 /// `gloo-net`'s fetch has no built-in timeout, so without this a hung or
-/// silently-dropped connection to api.anthropic.com stalls the conversation
-/// forever — the browser gives no error, `status` never leaves `Thinking`,
-/// and the only way out was previously the Stop button (see
-/// `close_dangling_tool_uses` for what a Stop mid-tool-call also needed).
-/// Must be sized to `MAX_TOKENS` in mod.rs: a long non-streaming response
-/// (a big multi-series chart SVG) legitimately takes minutes to generate,
-/// and the user always has the Stop button to bail out sooner. Anthropic
-/// caps non-streaming requests at ~10 minutes.
+/// silently-dropped connection stalls the conversation forever — the browser
+/// gives no error, `status` never leaves `Thinking`, and the only way out was
+/// previously the Stop button (see `close_dangling_tool_uses` for what a Stop
+/// mid-tool-call also needed). The server proxy bounds its own upstream call
+/// at 300s (see src/api/claude.rs, sized to `MAX_TOKENS` in mod.rs); this is
+/// deliberately a little longer so the proxy's timeout fires first and its
+/// error message — not a generic browser-side timeout — reaches the chat.
 #[cfg(feature = "web")]
-const CLAUDE_API_TIMEOUT_MS: u32 = 300_000;
+const CLAUDE_API_TIMEOUT_MS: u32 = 330_000;
 
-/// Call the real Claude Messages API directly from the browser. Only
-/// available in the WASM build — `gloo-net`'s HTTP client doesn't exist
-/// natively, and this is never reached from the native component-test tier
-/// (this page can't render there anyway; it depends on the router).
+/// Call the Claude Messages API through the server-side proxy
+/// (`/dashboard/claude/messages`), which attaches the user's API key — the
+/// key never reaches the browser. The proxy passes Anthropic's response
+/// (including its error JSON) through verbatim, so handling here is the same
+/// as calling Anthropic directly. Only available in the WASM build —
+/// `gloo-net`'s HTTP client doesn't exist natively, and this is never reached
+/// from the native component-test tier (this page can't render there anyway;
+/// it depends on the router).
 #[cfg(feature = "web")]
 pub async fn call_anthropic_api(
-    api_key: &str,
     request: &super::ai_types::CreateMessageRequest,
 ) -> Result<CreateMessageResponse, String> {
     tracing::debug!(
@@ -275,13 +277,7 @@ pub async fn call_anthropic_api(
     );
 
     let send_and_parse = async {
-        let response = gloo_net::http::Request::post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            // Anthropic blocks direct browser-origin requests by default; this
-            // header is the documented opt-in for calling the API straight from
-            // WASM instead of through a server-side proxy.
-            .header("anthropic-dangerous-direct-browser-access", "true")
+        let response = gloo_net::http::Request::post("/dashboard/claude/messages")
             .json(request)
             .map_err(|e| e.to_string())?
             .send()
@@ -333,7 +329,6 @@ pub async fn call_anthropic_api(
 
 #[cfg(not(feature = "web"))]
 pub async fn call_anthropic_api(
-    _api_key: &str,
     _request: &super::ai_types::CreateMessageRequest,
 ) -> Result<CreateMessageResponse, String> {
     Err("the Claude API is only reachable from the browser build".to_string())

@@ -31,9 +31,9 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - Template editor with live preview
 - AI template generator (`/template/:id/generate`): chat with Claude to build or
   revise a template; Claude explores Prometheus/HTTP data with tools, renders
-  proposals (and sees them as images), and the result saves in place. Runs
-  entirely in the browser against `api.anthropic.com` with a per-user API key
-  held by the server — see
+  proposals (and sees them as images), and the result saves in place. The agent
+  loop runs in the browser; requests to Claude are proxied through the server,
+  which holds each user's API key (the key never reaches the browser) — see
   [completed/20260716-ai-template-generation](completed/20260716-ai-template-generation.md).
 - Prometheus query configuration per template (instant and time-range queries)
 - HTTP source configuration per template
