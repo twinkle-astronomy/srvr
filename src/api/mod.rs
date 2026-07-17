@@ -1,3 +1,4 @@
+pub mod ad_hoc_fetch;
 pub mod auth;
 pub mod devices;
 pub mod http_sources;
@@ -97,6 +98,7 @@ pub fn router() -> axum::Router {
     axum::Router::new().nest(
         "/dashboard",
         axum::Router::new()
+            .merge(ad_hoc_fetch::router())
             .merge(auth::router())
             .merge(devices::router())
             .merge(http_sources::router())

@@ -560,7 +560,8 @@ pub async fn user_count() -> Result<i64, sqlx::error::Error> {
 
 pub async fn get_user_by_id(id: i64) -> Result<Option<User>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id = ?",
+        "SELECT id, username, password_hash, claude_api_key, created_at, updated_at \
+         FROM users WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get())
@@ -569,7 +570,8 @@ pub async fn get_user_by_id(id: i64) -> Result<Option<User>, sqlx::error::Error>
 
 pub async fn get_user_by_username(username: &str) -> Result<Option<User>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?",
+        "SELECT id, username, password_hash, claude_api_key, created_at, updated_at \
+         FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(get())
@@ -592,7 +594,8 @@ pub async fn create_user(username: &str, password_hash: &str) -> Result<User, sq
 
 pub async fn get_users() -> Result<Vec<User>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, username, password_hash, created_at, updated_at FROM users ORDER BY created_at",
+        "SELECT id, username, password_hash, claude_api_key, created_at, updated_at \
+         FROM users ORDER BY created_at",
     )
     .fetch_all(get())
     .await
@@ -612,6 +615,34 @@ pub async fn delete_user(id: i64) -> Result<(), sqlx::error::Error> {
         .bind(id)
         .execute(get())
         .await?;
+    Ok(())
+}
+
+pub async fn get_claude_api_key(user_id: i64) -> Result<Option<String>, sqlx::error::Error> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT claude_api_key FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(get())
+            .await?;
+    Ok(row.and_then(|(key,)| key))
+}
+
+pub async fn set_claude_api_key(user_id: i64, key: &str) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE users SET claude_api_key = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(key)
+        .bind(user_id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
+pub async fn clear_claude_api_key(user_id: i64) -> Result<(), sqlx::error::Error> {
+    sqlx::query(
+        "UPDATE users SET claude_api_key = NULL, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(user_id)
+    .execute(get())
+    .await?;
     Ok(())
 }
 
@@ -714,7 +745,29 @@ mod tests {
             .expect("get after delete");
         assert!(empty.is_empty(), "range query should be gone after delete");
     }
-// temporary probe appended to src/db.rs tests
 
+    #[tokio::test]
+    async fn test_claude_api_key_round_trip() {
+        init_test_db().await;
 
+        let username = format!("claude_key_user_{}", std::process::id());
+        let hash = "not-a-real-hash";
+        let user = create_user(&username, hash).await.expect("create user");
+
+        // (c) no key set yet
+        let before = get_claude_api_key(user.id).await.expect("get before save");
+        assert_eq!(before, None, "no key should be set for a fresh user");
+
+        // (a) save a key, read it back
+        set_claude_api_key(user.id, "sk-ant-test-key")
+            .await
+            .expect("save key");
+        let saved = get_claude_api_key(user.id).await.expect("get after save");
+        assert_eq!(saved, Some("sk-ant-test-key".to_string()));
+
+        // (b) delete it, read back
+        clear_claude_api_key(user.id).await.expect("clear key");
+        let after = get_claude_api_key(user.id).await.expect("get after clear");
+        assert_eq!(after, None, "key should be cleared");
+    }
 }

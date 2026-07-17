@@ -136,6 +136,35 @@ async fn change_password_json(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+struct ClaudeApiKeyBody {
+    key: String,
+}
+
+async fn get_claude_api_key_json(auth: AuthSession) -> Result<Json<Option<String>>, ApiError> {
+    let user = require_auth(&auth)?;
+    let key = crate::db::get_claude_api_key(user.id).await?;
+    Ok(Json(key))
+}
+
+async fn save_claude_api_key_json(
+    auth: AuthSession,
+    Json(body): Json<ClaudeApiKeyBody>,
+) -> Result<StatusCode, ApiError> {
+    let user = require_auth(&auth)?;
+    if body.key.is_empty() {
+        return Err(ApiError::bad_request("Key required"));
+    }
+    crate::db::set_claude_api_key(user.id, &body.key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_claude_api_key_json(auth: AuthSession) -> Result<StatusCode, ApiError> {
+    let user = require_auth(&auth)?;
+    crate::db::clear_claude_api_key(user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub fn router() -> axum::Router {
     axum::Router::new()
         .route("/auth", get(check_auth))
@@ -146,6 +175,12 @@ pub fn router() -> axum::Router {
         .route("/auth/change-password", post(change_password_json))
         .route("/needs-setup", get(check_needs_setup))
         .route("/server-info", get(get_server_info))
+        .route(
+            "/claude-api-key",
+            get(get_claude_api_key_json)
+                .put(save_claude_api_key_json)
+                .delete(delete_claude_api_key_json),
+        )
 }
 
 #[cfg(all(test, feature = "server"))]
@@ -210,5 +245,112 @@ mod tests {
         let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // User-facing message, not database driver internals.
         assert_eq!(err["error"], "Already exists");
+    }
+
+    #[tokio::test]
+    async fn claude_api_key_requires_auth() {
+        let router = crate::api::test_support::auth_router(super::router()).await;
+        let response = router
+            .oneshot(Request::get("/claude-api-key").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn claude_api_key_round_trip() {
+        // login_session merges this module's router in, so pass an empty one.
+        let (router, cookie) = crate::api::test_support::login_session(axum::Router::new()).await;
+
+        // No key set yet.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(key, None);
+
+        // Save a key.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"key": "sk-ant-test-key"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Read it back.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(key, Some("sk-ant-test-key".to_string()));
+
+        // Delete it.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::delete("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Gone.
+        let response = router
+            .oneshot(
+                Request::get("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let key: Option<String> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(key, None);
+    }
+
+    #[tokio::test]
+    async fn empty_claude_api_key_is_rejected() {
+        // login_session merges this module's router in, so pass an empty one.
+        let (router, cookie) = crate::api::test_support::login_session(axum::Router::new()).await;
+        let response = router
+            .oneshot(
+                Request::put("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"key": ""}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

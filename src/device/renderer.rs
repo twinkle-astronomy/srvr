@@ -22,6 +22,8 @@ pub enum Error {
     TzError(#[from] chrono_tz::ParseError),
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    ImageError(#[from] image::ImageError),
 }
 
 pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error> {
@@ -81,9 +83,22 @@ pub async fn render_screen(render_context: &RenderContext) -> Result<Vec<u8>, Er
     Ok(svg_to_bmp(&svg_data)?)
 }
 
-/// Converts SVG string to 1-bit BMP data
-/// Returns (bmp_data, width, height)
-fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
+/// Renders the same 1-bit image as a PNG — for handing to something that
+/// can't read BMP (e.g. Claude's vision input, which only accepts
+/// jpeg/png/gif/webp). Pixel-for-pixel identical to [`render_screen`]'s BMP:
+/// both are built from the same black/white threshold pass.
+pub async fn render_screen_png(render_context: &RenderContext) -> Result<Vec<u8>, Error> {
+    let svg_data = render_context
+        .template
+        .render(render_vars(render_context).await?)?;
+
+    Ok(svg_to_png(&svg_data)?)
+}
+
+/// Parses and rasterizes SVG, then reduces it to the same black/white pixel
+/// grid the eink display will show. Returns (width, height, is_white) with
+/// `is_white` in row-major order.
+fn svg_to_bilevel(svg_data: &str) -> Result<(usize, usize, Vec<bool>), Error> {
     // Parse SVG
     let mut opt = usvg::Options::default();
     opt.fontdb_mut().load_system_fonts();
@@ -98,21 +113,10 @@ fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
     // Render SVG to pixmap
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
 
-    // Convert to 1-bit BMP
-    let bmp_data = pixmap_to_bmp(&pixmap)?;
-    Ok(bmp_data)
-}
-
-/// Converts a pixmap to 1-bit BMP format
-fn pixmap_to_bmp(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, Error> {
     let width = pixmap.width() as usize;
     let height = pixmap.height() as usize;
+    let mut is_white = vec![false; width * height];
 
-    // Convert RGBA pixmap to 1-bit format
-    let row_bytes = (width + 7) / 8; // Round up to nearest byte
-    let mut bit_data = vec![0u8; row_bytes * height];
-
-    // Pack pixels into 1-bit format
     for y in 0..height {
         for x in 0..width {
             let pixel = pixmap.pixel(x as u32, y as u32).unwrap();
@@ -122,8 +126,32 @@ fn pixmap_to_bmp(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, Error> {
                 + 0.587 * pixel.green() as f32
                 + 0.114 * pixel.blue() as f32) as u8;
 
-            // Apply threshold: >= 127 is white (1), < 127 is black (0)
-            if gray >= 127 {
+            // Apply threshold: >= 127 is white, < 127 is black
+            is_white[y * width + x] = gray >= 127;
+        }
+    }
+
+    Ok((width, height, is_white))
+}
+
+fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
+    let (width, height, is_white) = svg_to_bilevel(svg_data)?;
+    bilevel_to_bmp(width, height, &is_white)
+}
+
+fn svg_to_png(svg_data: &str) -> Result<Vec<u8>, Error> {
+    let (width, height, is_white) = svg_to_bilevel(svg_data)?;
+    bilevel_to_png(width, height, &is_white)
+}
+
+/// Packs a black/white pixel grid into 1-bit BMP format.
+fn bilevel_to_bmp(width: usize, height: usize, is_white: &[bool]) -> Result<Vec<u8>, Error> {
+    let row_bytes = (width + 7) / 8; // Round up to nearest byte
+    let mut bit_data = vec![0u8; row_bytes * height];
+
+    for y in 0..height {
+        for x in 0..width {
+            if is_white[y * width + x] {
                 let byte_index = y * row_bytes + x / 8;
                 let bit_index = 7 - (x % 8); // MSB first
                 bit_data[byte_index] |= 1 << bit_index;
@@ -131,8 +159,23 @@ fn pixmap_to_bmp(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, Error> {
         }
     }
 
-    // Create BMP file
     create_bmp_file(width, height, &bit_data)
+}
+
+/// Encodes a black/white pixel grid as an 8-bit grayscale PNG (pure 0x00 /
+/// 0xFF values — visually identical to the 1-bit BMP, just in a container
+/// format vision-capable consumers can decode).
+fn bilevel_to_png(width: usize, height: usize, is_white: &[bool]) -> Result<Vec<u8>, Error> {
+    let gray_bytes: Vec<u8> = is_white
+        .iter()
+        .map(|&white| if white { 255u8 } else { 0u8 })
+        .collect();
+    let img = image::GrayImage::from_raw(width as u32, height as u32, gray_bytes)
+        .expect("gray_bytes length matches width * height");
+
+    let mut png_data = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png_data, image::ImageFormat::Png)?;
+    Ok(png_data.into_inner())
 }
 
 /// Creates a 1-bit BMP file from bit data
@@ -185,4 +228,47 @@ fn create_bmp_file(width: usize, height: usize, bit_data: &[u8]) -> Result<Vec<u
     }
 
     Ok(bmp_data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_svg_to_png_encodes_black_fill_as_black_pixels() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="black"/></svg>"#;
+        let png_bytes = svg_to_png(svg).expect("encode png");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(decoded.width(), 10);
+        assert_eq!(decoded.height(), 10);
+        let pixel = decoded.to_luma8().get_pixel(5, 5).0[0];
+        assert_eq!(pixel, 0, "black-filled SVG should render as black pixels");
+    }
+
+    #[test]
+    fn test_svg_to_png_encodes_white_fill_as_white_pixels() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="white"/></svg>"#;
+        let png_bytes = svg_to_png(svg).expect("encode png");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        let pixel = decoded.to_luma8().get_pixel(5, 5).0[0];
+        assert_eq!(pixel, 255, "white-filled SVG should render as white pixels");
+    }
+
+    #[test]
+    fn test_svg_to_png_matches_svg_to_bmp_dimensions() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="8"><rect width="20" height="8" fill="black"/></svg>"#;
+        let png_bytes = svg_to_png(svg).expect("encode png");
+        let bmp_bytes = svg_to_bmp(svg).expect("encode bmp");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(decoded.width(), 20);
+        assert_eq!(decoded.height(), 8);
+        // BMP width/height live little-endian in the DIB header at fixed offsets.
+        let bmp_width = i32::from_le_bytes(bmp_bytes[18..22].try_into().unwrap());
+        let bmp_height = i32::from_le_bytes(bmp_bytes[22..26].try_into().unwrap());
+        assert_eq!(bmp_width, 20);
+        assert_eq!(bmp_height, 8);
+    }
 }

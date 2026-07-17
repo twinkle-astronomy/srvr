@@ -56,11 +56,16 @@ pub fn TemplateEditor(id: i64) -> Element {
 
     rsx! {
         div { class: "mb-8",
-            div { class: "mb-2",
+            div { class: "mb-2 flex items-center justify-between",
                 Link {
                     to: super::super::Route::Templates {},
                     class: "inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-900 transition-colors",
                     "\u{2190} Back to Templates"
+                }
+                Link {
+                    to: super::super::Route::AiTemplateGenerator { id },
+                    class: "inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors",
+                    "Generate with AI"
                 }
             }
             h1 { class: "text-3xl font-bold text-gray-900 tracking-tight", "Template Editor" }

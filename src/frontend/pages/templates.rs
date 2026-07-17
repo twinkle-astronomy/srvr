@@ -59,16 +59,27 @@ pub fn Templates() -> Element {
         } else {
             div { class: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6",
                 for template in templates() {
-                    Link {
+                    div {
                         key: "{template.id}",
-                        to: super::super::Route::TemplateEditor { id: template.id },
-                        class: "block group",
-                        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden group-hover:shadow-md group-hover:border-gray-200 transition-all",
-                            div { class: "p-5",
-                                h3 { class: "font-medium text-gray-900 mb-1", "{template.name}" }
-                                p { class: "text-xs text-gray-400",
-                                    "Updated {template.updated_at}"
-                                }
+                        class: "bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md hover:border-gray-200 transition-all",
+                        div { class: "p-5",
+                            h3 { class: "font-medium text-gray-900 mb-1", "{template.name}" }
+                            p { class: "text-xs text-gray-400",
+                                "Updated {template.updated_at}"
+                            }
+                        }
+                        // Editor and AI generation are equally valid ways to work on
+                        // a template — neither is a fallback for the other.
+                        div { class: "grid grid-cols-2 border-t border-gray-100",
+                            Link {
+                                to: super::super::Route::TemplateEditor { id: template.id },
+                                class: "flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors border-r border-gray-100",
+                                "Edit"
+                            }
+                            Link {
+                                to: super::super::Route::AiTemplateGenerator { id: template.id },
+                                class: "flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors",
+                                "Generate with AI"
                             }
                         }
                     }

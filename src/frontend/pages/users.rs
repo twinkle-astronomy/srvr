@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::frontend::{
-    server_fns::{change_password, create_user},
+    server_fns::{change_password, create_user, delete_claude_api_key, get_claude_api_key, save_claude_api_key},
     store::AppStore,
 };
 use crate::models::AuthenticatedUser;
@@ -113,6 +113,8 @@ pub fn Users() -> Element {
             }
         }
 
+        ClaudeApiKeyCard {}
+
         div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
             h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4",
                 "Create User"
@@ -202,6 +204,140 @@ pub fn Users() -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn ClaudeApiKeyCard() -> Element {
+    // `None` while loading; `Some(true/false)` once we know whether a key is saved.
+    let mut key_set = use_signal(|| None::<bool>);
+    let mut input = use_signal(String::new);
+    let mut error = use_signal(|| None::<String>);
+    let mut status = use_signal(|| None::<String>);
+    let mut submitting = use_signal(|| false);
+
+    use_resource(move || async move {
+        match get_claude_api_key().await {
+            Ok(key) => key_set.set(Some(key.is_some())),
+            Err(e) => {
+                error.set(Some(e.to_string()));
+                key_set.set(Some(false));
+            }
+        }
+    });
+
+    rsx! {
+        div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6",
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4",
+                "Claude API Key"
+            }
+            p { class: "text-sm text-gray-500 mb-4",
+                "Used by the AI-assisted template generator to call the Claude API directly from your browser."
+            }
+            if let Some(ref msg) = status() {
+                div { class: "mb-4 p-3 bg-green-50 border border-green-200 rounded-lg",
+                    p { class: "text-sm text-green-700", "{msg}" }
+                }
+            }
+            if let Some(ref msg) = error() {
+                div { class: "mb-4 p-3 bg-red-50 border border-red-200 rounded-lg",
+                    p { class: "text-sm text-red-600", "{msg}" }
+                }
+            }
+            match key_set() {
+                None => rsx! {
+                    p { class: "text-sm text-gray-400", "Checking..." }
+                },
+                Some(true) => rsx! {
+                    div { class: "flex items-center gap-3",
+                        code { class: "text-sm text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg",
+                            "sk-ant-\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+                        }
+                        button {
+                            r#type: "button",
+                            disabled: submitting(),
+                            class: "px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50",
+                            onclick: move |_| {
+                                error.set(None);
+                                status.set(None);
+                                submitting.set(true);
+                                spawn(async move {
+                                    match delete_claude_api_key().await {
+                                        Ok(()) => {
+                                            key_set.set(Some(false));
+                                            status.set(Some("Deleted.".to_string()));
+                                        }
+                                        Err(e) => error.set(Some(e.to_string())),
+                                    }
+                                    submitting.set(false);
+                                });
+                            },
+                            if submitting() { "Deleting..." } else { "Delete" }
+                        }
+                    }
+                },
+                Some(false) => rsx! {
+                    p { class: "text-sm text-gray-500 mb-3",
+                        "Create a key on the "
+                        a {
+                            href: "https://console.anthropic.com/settings/keys",
+                            target: "_blank",
+                            rel: "noopener noreferrer",
+                            class: "text-blue-600 hover:underline",
+                            "Anthropic Console"
+                        }
+                        " (sign in, then \u{201c}Create Key\u{201d}) and paste it below. It's stored on this "
+                        "server and used only by your browser to call the Claude API directly."
+                    }
+                    form {
+                        class: "flex items-end gap-3",
+                        onsubmit: move |event| {
+                            event.prevent_default();
+                            let key = input();
+                            error.set(None);
+                            status.set(None);
+                            submitting.set(true);
+                            spawn(async move {
+                                match save_claude_api_key(key).await {
+                                    Ok(()) => {
+                                        input.set(String::new());
+                                        key_set.set(Some(true));
+                                        status.set(Some("Saved.".to_string()));
+                                    }
+                                    Err(e) => error.set(Some(e.to_string())),
+                                }
+                                submitting.set(false);
+                            });
+                        },
+
+                        div { class: "flex-1",
+                            label {
+                                class: "block text-sm font-medium text-gray-700 mb-1",
+                                r#for: "claude_api_key",
+                                "API Key"
+                            }
+                            input {
+                                r#type: "password",
+                                id: "claude_api_key",
+                                name: "claude_api_key",
+                                required: true,
+                                placeholder: "sk-ant-...",
+                                class: "w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-gray-300",
+                                value: "{input()}",
+                                oninput: move |e| input.set(e.value()),
+                            }
+                        }
+
+                        button {
+                            r#type: "submit",
+                            disabled: submitting(),
+                            class: "px-4 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50",
+                            if submitting() { "Saving..." } else { "Save" }
+                        }
+                    }
+                },
             }
         }
     }
