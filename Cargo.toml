@@ -43,6 +43,8 @@ rustls-acme = { version = "0.15", features = ["axum"], optional = true }
 web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 gloo-net = { version = "0.6", features = ["http"], optional = true }
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+futures-util = { version = "0.3", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -64,7 +66,7 @@ rustls = { version = "0.23", features = ["ring"] }
 strip = "debuginfo"
 
 [features]
-web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:gloo-net"]
+web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:gloo-net", "dep:gloo-timers", "dep:futures-util"]
 server = [
     "dioxus/server",
     "tokio/full",

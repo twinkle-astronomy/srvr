@@ -1,3 +1,4 @@
+mod ai_template_generator;
 mod dashboard;
 mod devices;
 mod login;
@@ -6,6 +7,7 @@ mod template_editor;
 mod templates;
 mod users;
 
+pub use ai_template_generator::AiTemplateGenerator;
 pub use dashboard::Dashboard;
 pub use devices::{DeviceDetail, Devices};
 pub use login::Login;

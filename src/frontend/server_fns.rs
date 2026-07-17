@@ -209,6 +209,7 @@ native_test_stubs! {
     pub async fn copy_template(i64) -> Template;
     pub async fn get_virtual_render_context(i64) -> RenderContext;
     pub async fn get_template_preview(RenderContext) -> String;
+    pub async fn get_template_preview_png(RenderContext) -> String;
     pub async fn get_template_context(RenderContext) -> Vec<TemplateVar>;
     // Prometheus
     pub async fn get_prometheus_queries_for_template(i64) -> Vec<PrometheusQuery>;
@@ -225,6 +226,11 @@ native_test_stubs! {
     pub async fn save_http_source(HttpSource) -> HttpSource;
     pub async fn delete_http_source(i64) -> ();
     pub async fn execute_http_source(HttpSource) -> HttpSourceResult;
+    // Claude AI (template generation)
+    pub async fn has_claude_api_key() -> bool;
+    pub async fn save_claude_api_key(String) -> ();
+    pub async fn delete_claude_api_key() -> ();
+    pub async fn execute_ad_hoc_http_fetch(String) -> String;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,10 @@ mod test_harness;
 
 use dioxus::prelude::*;
 
-use pages::{Dashboard, DeviceDetail, Devices, Login, Setup, TemplateEditor, Templates, Users};
+use pages::{
+    AiTemplateGenerator, Dashboard, DeviceDetail, Devices, Login, Setup, TemplateEditor,
+    Templates, Users,
+};
 use store::AppStore;
 
 #[derive(Routable, Clone, PartialEq, Debug)]
@@ -31,6 +34,8 @@ enum Route {
         Templates {},
         #[route("/template/:id")]
         TemplateEditor { id: i64 },
+        #[route("/template/:id/generate")]
+        AiTemplateGenerator { id: i64 },
         #[route("/users")]
         Users {},
     #[end_layout]

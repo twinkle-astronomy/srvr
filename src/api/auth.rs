@@ -136,6 +136,39 @@ async fn change_password_json(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+struct ClaudeApiKeyBody {
+    key: String,
+}
+
+/// Reports only whether the calling user has a key configured. The key
+/// itself never leaves the server — the browser calls Claude through the
+/// `/claude/messages` proxy (src/api/claude.rs), which attaches it
+/// server-side.
+async fn has_claude_api_key_json(auth: AuthSession) -> Result<Json<bool>, ApiError> {
+    let user = require_auth(&auth)?;
+    let key = crate::db::get_claude_api_key(user.id).await?;
+    Ok(Json(key.is_some()))
+}
+
+async fn save_claude_api_key_json(
+    auth: AuthSession,
+    Json(body): Json<ClaudeApiKeyBody>,
+) -> Result<StatusCode, ApiError> {
+    let user = require_auth(&auth)?;
+    if body.key.is_empty() {
+        return Err(ApiError::bad_request("Key required"));
+    }
+    crate::db::set_claude_api_key(user.id, &body.key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_claude_api_key_json(auth: AuthSession) -> Result<StatusCode, ApiError> {
+    let user = require_auth(&auth)?;
+    crate::db::clear_claude_api_key(user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub fn router() -> axum::Router {
     axum::Router::new()
         .route("/auth", get(check_auth))
@@ -146,6 +179,12 @@ pub fn router() -> axum::Router {
         .route("/auth/change-password", post(change_password_json))
         .route("/needs-setup", get(check_needs_setup))
         .route("/server-info", get(get_server_info))
+        .route(
+            "/claude-api-key",
+            get(has_claude_api_key_json)
+                .put(save_claude_api_key_json)
+                .delete(delete_claude_api_key_json),
+        )
 }
 
 #[cfg(all(test, feature = "server"))]
@@ -210,5 +249,99 @@ mod tests {
         let err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         // User-facing message, not database driver internals.
         assert_eq!(err["error"], "Already exists");
+    }
+
+    #[tokio::test]
+    async fn claude_api_key_requires_auth() {
+        let router = crate::api::test_support::auth_router(super::router()).await;
+        let response = router
+            .oneshot(Request::get("/claude-api-key").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn claude_api_key_round_trip_never_returns_the_key() {
+        // login_session merges this module's router in, so pass an empty one.
+        let (router, cookie) = crate::api::test_support::login_session(axum::Router::new()).await;
+
+        // GET reports only whether a key is configured — the key itself must
+        // never leave the server (the browser talks to Claude through the
+        // /claude/messages proxy, which attaches it server-side).
+        let read_has_key = |router: axum::Router, cookie: String| async move {
+            let response = router
+                .oneshot(
+                    Request::get("/claude-api-key")
+                        .header("cookie", &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(
+                !body.contains("sk-ant"),
+                "response must not contain the key, got: {body}"
+            );
+            serde_json::from_str::<bool>(&body).expect("body should be a bare JSON boolean")
+        };
+
+        // No key set yet.
+        assert!(!read_has_key(router.clone(), cookie.clone()).await);
+
+        // Save a key.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"key": "sk-ant-test-key"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Configured now — but still no key material in the response.
+        assert!(read_has_key(router.clone(), cookie.clone()).await);
+
+        // Delete it.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::delete("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Gone.
+        assert!(!read_has_key(router, cookie).await);
+    }
+
+    #[tokio::test]
+    async fn empty_claude_api_key_is_rejected() {
+        // login_session merges this module's router in, so pass an empty one.
+        let (router, cookie) = crate::api::test_support::login_session(axum::Router::new()).await;
+        let response = router
+            .oneshot(
+                Request::put("/claude-api-key")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"key": ""}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

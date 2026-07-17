@@ -12,7 +12,15 @@ use crate::time::{Clock, RealClock};
 
 pub fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(reqwest::Client::new)
+    CLIENT.get_or_init(|| {
+        // reqwest has no default timeout — without one, a Prometheus server or
+        // ad-hoc URL that never responds hangs the request (and whatever's
+        // awaiting it, e.g. the AI generator's tool-call loop) forever.
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .expect("build shared http client")
+    })
 }
 
 impl Template {

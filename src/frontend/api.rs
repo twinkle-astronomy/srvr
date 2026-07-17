@@ -62,8 +62,26 @@ async fn parse<T: for<'de> serde::Deserialize<'de>>(
     resp.json().await.map_err(|e| ServerFnError::new(e.to_string()))
 }
 
+/// Every local `/dashboard/*` call funnels through one of the verb helpers
+/// below; logging here (rather than at each of the ~40 call sites) gives full
+/// visibility into every outbound fetch with one change per verb. Each helper
+/// wraps its body in an inner `async` block so the `?`-early-return path
+/// still gets logged instead of skipping straight past it.
+fn log_outcome<T>(method: &str, path: &str, result: &Result<T, ServerFnError>) {
+    match result {
+        Ok(_) => tracing::debug!("{method} {path} -> ok"),
+        Err(e) => tracing::warn!("{method} {path} -> error: {e}"),
+    }
+}
+
 async fn get<T: for<'de> serde::Deserialize<'de>>(path: &str) -> Result<T, ServerFnError> {
-    parse(send_checked(build(gloo_net::http::Request::get(path))?).await?).await
+    tracing::debug!("{path}: GET sending");
+    let result: Result<T, ServerFnError> = async {
+        parse(send_checked(build(gloo_net::http::Request::get(path))?).await?).await
+    }
+    .await;
+    log_outcome("GET", path, &result);
+    result
 }
 
 async fn post<B, T>(path: &str, body: &B) -> Result<T, ServerFnError>
@@ -71,35 +89,71 @@ where
     B: serde::Serialize,
     T: for<'de> serde::Deserialize<'de>,
 {
-    parse(send_checked(with_json(gloo_net::http::Request::post(path), body)?).await?).await
+    tracing::debug!("{path}: POST sending");
+    let result: Result<T, ServerFnError> = async {
+        parse(send_checked(with_json(gloo_net::http::Request::post(path), body)?).await?).await
+    }
+    .await;
+    log_outcome("POST", path, &result);
+    result
 }
 
 async fn post_void<B: serde::Serialize>(path: &str, body: &B) -> Result<(), ServerFnError> {
-    send_checked(with_json(gloo_net::http::Request::post(path), body)?)
-        .await
-        .map(|_| ())
+    tracing::debug!("{path}: POST sending");
+    let result: Result<(), ServerFnError> = async {
+        send_checked(with_json(gloo_net::http::Request::post(path), body)?)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    log_outcome("POST", path, &result);
+    result
 }
 
 async fn post_empty<T: for<'de> serde::Deserialize<'de>>(path: &str) -> Result<T, ServerFnError> {
-    parse(send_checked(build(gloo_net::http::Request::post(path))?).await?).await
+    tracing::debug!("{path}: POST sending");
+    let result: Result<T, ServerFnError> = async {
+        parse(send_checked(build(gloo_net::http::Request::post(path))?).await?).await
+    }
+    .await;
+    log_outcome("POST", path, &result);
+    result
 }
 
 async fn put_void<B: serde::Serialize>(path: &str, body: &B) -> Result<(), ServerFnError> {
-    send_checked(with_json(gloo_net::http::Request::put(path), body)?)
-        .await
-        .map(|_| ())
+    tracing::debug!("{path}: PUT sending");
+    let result: Result<(), ServerFnError> = async {
+        send_checked(with_json(gloo_net::http::Request::put(path), body)?)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    log_outcome("PUT", path, &result);
+    result
 }
 
 async fn del(path: &str) -> Result<(), ServerFnError> {
-    send_checked(build(gloo_net::http::Request::delete(path))?)
-        .await
-        .map(|_| ())
+    tracing::debug!("{path}: DELETE sending");
+    let result: Result<(), ServerFnError> = async {
+        send_checked(build(gloo_net::http::Request::delete(path))?)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    log_outcome("DELETE", path, &result);
+    result
 }
 
 async fn post_empty_void(path: &str) -> Result<(), ServerFnError> {
-    send_checked(build(gloo_net::http::Request::post(path))?)
-        .await
-        .map(|_| ())
+    tracing::debug!("{path}: POST sending");
+    let result: Result<(), ServerFnError> = async {
+        send_checked(build(gloo_net::http::Request::post(path))?)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    log_outcome("POST", path, &result);
+    result
 }
 
 // --- Auth ---
@@ -270,6 +324,12 @@ pub async fn get_template_preview(render_context: RenderContext) -> Result<Strin
     post("/dashboard/preview", &render_context).await
 }
 
+pub async fn get_template_preview_png(
+    render_context: RenderContext,
+) -> Result<String, ServerFnError> {
+    post("/dashboard/preview/png", &render_context).await
+}
+
 pub async fn get_template_context(
     render_context: RenderContext,
 ) -> Result<Vec<TemplateVar>, ServerFnError> {
@@ -336,4 +396,25 @@ pub async fn delete_http_source(id: i64) -> Result<(), ServerFnError> {
 
 pub async fn execute_http_source(source: HttpSource) -> Result<HttpSourceResult, ServerFnError> {
     post("/dashboard/http-sources/execute", &source).await
+}
+
+// --- Claude AI (template generation) ---
+
+/// Whether the current user has a Claude API key configured. The key itself
+/// never reaches the browser — Claude calls go through the server-side
+/// `/dashboard/claude/messages` proxy, which attaches it.
+pub async fn has_claude_api_key() -> Result<bool, ServerFnError> {
+    get("/dashboard/claude-api-key").await
+}
+
+pub async fn save_claude_api_key(key: String) -> Result<(), ServerFnError> {
+    put_void("/dashboard/claude-api-key", &serde_json::json!({"key": key})).await
+}
+
+pub async fn delete_claude_api_key() -> Result<(), ServerFnError> {
+    del("/dashboard/claude-api-key").await
+}
+
+pub async fn execute_ad_hoc_http_fetch(url: String) -> Result<String, ServerFnError> {
+    post("/dashboard/ad-hoc-fetch", &serde_json::json!({"url": url})).await
 }
