@@ -97,11 +97,14 @@ Rollback is just "activate an older release again." Originated from
   `normalize-space(.)='…'` matches where the needle is a prefix of other UI
   text.
 
-**What to change (proposals — pending confirmation per the process)**
+**What to change (confirmed and applied)**
 
-- Add a rule to development-process.md: *fallback paths on user-visible
-  flows must surface their outcome in the UI* (a silent `None` looks
-  identical to dead code, and cost a debugging round-trip here).
-- Add a rule or testing.md note: *when a bug is reproduced from a real
-  artifact (binary, wire capture), check the artifact's bytes in as the
-  regression fixture* rather than re-synthesizing from assumptions.
+Both proposals were confirmed and are now rules in
+[development-process.md](../../development-process.md#rules):
+
+- *Surface fallback outcomes on user-visible flows* — a silent `None`
+  looks identical to dead code, and cost a debugging round-trip here.
+- *Fixture real artifacts, don't re-synthesize them* — when a bug is
+  reproduced from a real artifact (binary, wire capture), check the
+  artifact's bytes in as the regression fixture rather than rebuilding it
+  from the same assumptions that produced the bug.
