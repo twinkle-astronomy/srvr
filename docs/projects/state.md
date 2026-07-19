@@ -19,6 +19,11 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - Telemetry logging (`POST /api/log`) — battery, WiFi signal, heap, firmware version
 - Real-time device and log streams via SSE
 - HMAC-SHA256 URL signing with 60-second expiry for image fetch security
+- Firmware OTA updates: `/api/display` tells opted-in devices to update
+  (`update_firmware`/`firmware_url`) when their reported `fw_version`
+  doesn't match the active release for their `model`; the binary is served
+  from the signed `GET /firmware/download` route — see
+  [completed/20260719-firmware-ota-updates](completed/20260719-firmware-ota-updates.md).
 
 ### Rendering
 - Liquid template engine with access to device state, time, Prometheus queries (instant and time-range), and HTTP sources
@@ -39,6 +44,11 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - HTTP source configuration per template
 - User management (including per-user Claude API key)
 - Initial setup flow
+- Firmware release management (`/firmware`): upload `.bin` releases tagged
+  by device `model` (version auto-detected from the binary's embedded
+  ESP-IDF app descriptor, manually editable), activate one release per
+  model (rollback = activate an older one), delete inactive releases.
+  Per-device opt-in toggle (default off) on the device detail page.
 
 ### Infrastructure
 - Native frontend test harness (`src/frontend/test_harness.rs`): renders Dioxus
