@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "server")]
 use crate::models::{
-    AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
-    PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext, Template,
+    AuthenticatedUser, Device, DeviceLog, FirmwareRelease, HttpSource, HttpSourceResult,
+    PrometheusQuery, PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext,
+    Template,
 };
 
 // ---------------------------------------------------------------------------
@@ -195,6 +196,7 @@ native_test_stubs! {
     pub async fn delete_device(i64) -> ();
     pub async fn update_device_template(i64, i64) -> ();
     pub async fn update_device_maximum_compatibility(i64, bool) -> ();
+    pub async fn update_device_firmware_updates_enabled(i64, bool) -> ();
     pub async fn get_render_context(i64) -> RenderContext;
     pub async fn get_render_context_for_template(i64, i64) -> RenderContext;
     pub async fn get_screen_preview(i64) -> String;
@@ -222,6 +224,11 @@ native_test_stubs! {
     pub async fn save_range_query(RangeQuery) -> RangeQuery;
     pub async fn delete_range_query(i64) -> ();
     pub async fn execute_range_query(RangeQuery) -> RangeQueryResult;
+    // Firmware
+    pub async fn get_firmware_releases() -> Vec<FirmwareRelease>;
+    pub async fn upload_firmware_release(String, String, String, Vec<u8>) -> FirmwareRelease;
+    pub async fn activate_firmware_release(i64) -> ();
+    pub async fn delete_firmware_release(i64) -> ();
     // HTTP sources
     pub async fn save_http_source(HttpSource) -> HttpSource;
     pub async fn delete_http_source(i64) -> ();

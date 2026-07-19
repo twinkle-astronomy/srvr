@@ -11,8 +11,8 @@ mod test_harness;
 use dioxus::prelude::*;
 
 use pages::{
-    AiTemplateGenerator, Dashboard, DeviceDetail, Devices, Login, Setup, TemplateEditor,
-    Templates, Users,
+    AiTemplateGenerator, Dashboard, DeviceDetail, Devices, Firmware, Login, Setup,
+    TemplateEditor, Templates, Users,
 };
 use store::AppStore;
 
@@ -38,6 +38,8 @@ enum Route {
         AiTemplateGenerator { id: i64 },
         #[route("/users")]
         Users {},
+        #[route("/firmware")]
+        Firmware {},
     #[end_layout]
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
@@ -63,6 +65,7 @@ fn NavLayout() -> Element {
         spawn(store.fetch_templates());
         spawn(store.fetch_users());
         spawn(store.fetch_server_info());
+        spawn(store.fetch_firmware_releases());
     });
 
     let needs_setup = store.needs_setup;

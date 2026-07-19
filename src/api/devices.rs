@@ -69,6 +69,16 @@ async fn update_device_compat(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn update_device_firmware_updates(
+    auth: AuthSession,
+    Path(device_id): Path<i64>,
+    Json(body): Json<UpdateCompatBody>,
+) -> Result<StatusCode, ApiError> {
+    require_auth(&auth)?;
+    crate::db::update_device_firmware_updates_enabled(device_id, body.enabled).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn get_render_context(
     auth: AuthSession,
     Path(id): Path<i64>,
@@ -125,6 +135,10 @@ pub fn router() -> axum::Router {
         .route("/devices/{id}/logs", get(get_device_logs))
         .route("/devices/{id}/template", post(update_device_template))
         .route("/devices/{id}/compat", post(update_device_compat))
+        .route(
+            "/devices/{id}/firmware-updates",
+            post(update_device_firmware_updates),
+        )
         .route("/devices/{id}/render-context", get(get_render_context))
         .route(
             "/devices/{id}/render-context/{template_id}",
@@ -171,6 +185,42 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         // Shared test DB: assert the shape parses, not the count.
         let _devices: Vec<crate::models::Device> = serde_json::from_slice(&body).unwrap();
+    }
+
+    #[tokio::test]
+    async fn firmware_updates_toggle_round_trip() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let device = crate::db::create_device(
+            &format!("fw-toggle-api-token-{suffix}"),
+            Some(&format!("aa:bb:cc:dd:ff:{suffix}")),
+            Some("trmnl-og"),
+            &format!("fw-toggle-api-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+        assert!(!device.firmware_updates_enabled);
+
+        let response = router
+            .oneshot(
+                Request::post(format!("/devices/{}/firmware-updates", device.id))
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"enabled": true}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let updated = crate::db::get_device(device.id).await.expect("get device");
+        assert!(updated.firmware_updates_enabled);
     }
 
     #[tokio::test]

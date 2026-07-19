@@ -151,7 +151,20 @@ pub struct Device {
     pub rssi: Option<String>,
     pub template_id: i64,
     pub maximum_compatibility: bool,
+    pub firmware_updates_enabled: bool,
     pub last_seen_at: String,
+    pub created_at: String,
+}
+
+#[cfg_attr(feature = "server", derive(FromRow))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FirmwareRelease {
+    pub id: i64,
+    pub model: String,
+    pub version: String,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub active: bool,
     pub created_at: String,
 }
 
@@ -283,6 +296,7 @@ impl Device {
             rssi: Some("-65".to_string()),
             template_id: 0,
             maximum_compatibility: false,
+            firmware_updates_enabled: false,
             last_seen_at: String::new(),
             created_at: String::new(),
         }

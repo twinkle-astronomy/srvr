@@ -13,8 +13,9 @@
 use crate::{
     frontend::server_fns::{ServerFnError, ServerInfo, TemplateVar},
     models::{
-        AuthenticatedUser, Device, DeviceLog, HttpSource, HttpSourceResult, PrometheusQuery,
-        PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext, Template,
+        AuthenticatedUser, Device, DeviceLog, FirmwareRelease, HttpSource, HttpSourceResult,
+        PrometheusQuery, PrometheusQueryResult, RangeQuery, RangeQueryResult, RenderContext,
+        Template,
     },
 };
 
@@ -256,6 +257,17 @@ pub async fn update_device_maximum_compatibility(
     .await
 }
 
+pub async fn update_device_firmware_updates_enabled(
+    device_id: i64,
+    enabled: bool,
+) -> Result<(), ServerFnError> {
+    post_void(
+        &format!("/dashboard/devices/{device_id}/firmware-updates"),
+        &serde_json::json!({"enabled": enabled}),
+    )
+    .await
+}
+
 pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError> {
     get(&format!("/dashboard/devices/{id}/render-context")).await
 }
@@ -334,6 +346,53 @@ pub async fn get_template_context(
     render_context: RenderContext,
 ) -> Result<Vec<TemplateVar>, ServerFnError> {
     post("/dashboard/context", &render_context).await
+}
+
+// --- Firmware ---
+
+pub async fn get_firmware_releases() -> Result<Vec<FirmwareRelease>, ServerFnError> {
+    get("/dashboard/firmware").await
+}
+
+/// The only multipart upload in the codebase — everything else round-trips
+/// JSON. `Content-Type` is intentionally left unset: the browser derives the
+/// `multipart/form-data; boundary=...` header itself from the `FormData`
+/// body, and setting it manually would omit the boundary and break parsing.
+pub async fn upload_firmware_release(
+    model: String,
+    version: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<FirmwareRelease, ServerFnError> {
+    let form = web_sys::FormData::new().map_err(|e| ServerFnError::new(format!("{e:?}")))?;
+    form.append_with_str("model", &model)
+        .map_err(|e| ServerFnError::new(format!("{e:?}")))?;
+    form.append_with_str("version", &version)
+        .map_err(|e| ServerFnError::new(format!("{e:?}")))?;
+
+    let array = js_sys::Uint8Array::from(bytes.as_slice());
+    let parts = js_sys::Array::new();
+    parts.push(&array);
+    let blob = web_sys::Blob::new_with_u8_array_sequence(&parts)
+        .map_err(|e| ServerFnError::new(format!("{e:?}")))?;
+    form.append_with_blob_and_filename("file", &blob, &filename)
+        .map_err(|e| ServerFnError::new(format!("{e:?}")))?;
+
+    let req = gloo_net::http::Request::post("/dashboard/firmware")
+        .body(form)
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let result: Result<FirmwareRelease, ServerFnError> =
+        async { parse(send_checked(req).await?).await }.await;
+    log_outcome("POST", "/dashboard/firmware", &result);
+    result
+}
+
+pub async fn activate_firmware_release(id: i64) -> Result<(), ServerFnError> {
+    post_empty_void(&format!("/dashboard/firmware/{id}/activate")).await
+}
+
+pub async fn delete_firmware_release(id: i64) -> Result<(), ServerFnError> {
+    del(&format!("/dashboard/firmware/{id}")).await
 }
 
 // --- Prometheus ---

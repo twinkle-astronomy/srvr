@@ -73,6 +73,20 @@ async fn unauthenticated_returns_401() {
 }
 ```
 
+## Binary/file uploads
+
+Most endpoints are JSON in, JSON out. The one exception is firmware
+upload (`POST /dashboard/firmware`, [src/api/firmware.rs](../src/api/firmware.rs)):
+it takes `axum::extract::Multipart` instead of `Json<T>`, and needs
+`DefaultBodyLimit::max(...)` layered onto that specific route — axum caps
+request bodies read via `Bytes`-based extractors (which `Multipart` is
+one of) at 2MB by default. On the client side,
+[src/frontend/api.rs](../src/frontend/api.rs)'s `upload_firmware_release`
+builds a `web_sys::FormData` + `Blob` and passes it directly as the
+`gloo_net` request body — do **not** set a `Content-Type` header
+yourself; the browser derives `multipart/form-data; boundary=...` from
+the `FormData` body, and an explicit header would omit the boundary.
+
 ## The `ServerFnError` shim
 
 `src/frontend/server_fns.rs` defines a small `ServerFnError(String)` (same API

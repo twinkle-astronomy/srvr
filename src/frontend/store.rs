@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::frontend::server_fns::{self, ServerFnError, ServerInfo};
-use crate::models::{AuthenticatedUser, Device, Template};
+use crate::models::{AuthenticatedUser, Device, FirmwareRelease, Template};
 
 #[derive(Clone, Copy)]
 pub struct AppStore {
@@ -15,11 +15,13 @@ pub struct AppStore {
     pub templates: Signal<Vec<Template>>,
     pub users: Signal<Vec<AuthenticatedUser>>,
     pub server_info: Signal<Option<ServerInfo>>,
+    pub firmware_releases: Signal<Vec<FirmwareRelease>>,
 
     // Distinguish loading-spinner from genuinely-empty lists
     pub devices_loaded: Signal<bool>,
     pub templates_loaded: Signal<bool>,
     pub users_loaded: Signal<bool>,
+    pub firmware_releases_loaded: Signal<bool>,
 }
 
 impl AppStore {
@@ -32,9 +34,11 @@ impl AppStore {
             templates: Signal::new(vec![]),
             users: Signal::new(vec![]),
             server_info: Signal::new(None),
+            firmware_releases: Signal::new(vec![]),
             devices_loaded: Signal::new(false),
             templates_loaded: Signal::new(false),
             users_loaded: Signal::new(false),
+            firmware_releases_loaded: Signal::new(false),
         }
     }
 
@@ -115,6 +119,62 @@ impl AppStore {
         if let Some(d) = self.devices.write().iter_mut().find(|d| d.id == device_id) {
             d.maximum_compatibility = val;
         }
+        Ok(())
+    }
+
+    pub async fn update_device_firmware_updates_enabled(
+        mut self,
+        device_id: i64,
+        val: bool,
+    ) -> Result<(), ServerFnError> {
+        server_fns::update_device_firmware_updates_enabled(device_id, val).await?;
+        if let Some(d) = self.devices.write().iter_mut().find(|d| d.id == device_id) {
+            d.firmware_updates_enabled = val;
+        }
+        Ok(())
+    }
+
+    // --- Firmware releases ---
+
+    pub async fn fetch_firmware_releases(mut self) {
+        match server_fns::get_firmware_releases().await {
+            Ok(list) => self.firmware_releases.set(list),
+            Err(e) => tracing::error!("fetch_firmware_releases failed: {e}"),
+        }
+        self.firmware_releases_loaded.set(true);
+    }
+
+    pub async fn upload_firmware_release(
+        mut self,
+        model: String,
+        version: String,
+        filename: String,
+        bytes: Vec<u8>,
+    ) -> Result<FirmwareRelease, ServerFnError> {
+        let release = server_fns::upload_firmware_release(model, version, filename, bytes).await?;
+        self.firmware_releases.write().push(release.clone());
+        Ok(release)
+    }
+
+    pub async fn activate_firmware_release(mut self, id: i64) -> Result<(), ServerFnError> {
+        server_fns::activate_firmware_release(id).await?;
+        let model = self
+            .firmware_releases
+            .peek()
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.model.clone());
+        for r in self.firmware_releases.write().iter_mut() {
+            if model.as_deref() == Some(r.model.as_str()) {
+                r.active = r.id == id;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn delete_firmware_release(mut self, id: i64) -> Result<(), ServerFnError> {
+        server_fns::delete_firmware_release(id).await?;
+        self.firmware_releases.write().retain(|r| r.id != id);
         Ok(())
     }
 

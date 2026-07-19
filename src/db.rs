@@ -7,7 +7,8 @@ use sqlx::{
 };
 
 use crate::models::{
-    Device, DeviceLog, DeviceLogEntry, HttpSource, PrometheusQuery, RangeQuery, Template, User,
+    Device, DeviceLog, DeviceLogEntry, FirmwareRelease, HttpSource, PrometheusQuery, RangeQuery,
+    Template, User,
 };
 
 static POOL: OnceLock<SqlitePool> = OnceLock::new();
@@ -156,6 +157,22 @@ pub async fn update_device_maximum_compatibility(
     Ok(())
 }
 
+// Mechanical mirror of update_device_maximum_compatibility above — same
+// shape, different column. Covered by a characterization round-trip test
+// rather than strict test-first (per development-process.md's allowance for
+// near-verbatim CRUD mirrors).
+pub async fn update_device_firmware_updates_enabled(
+    device_id: i64,
+    firmware_updates_enabled: bool,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE devices SET firmware_updates_enabled = ? WHERE id = ?")
+        .bind(firmware_updates_enabled)
+        .bind(device_id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
 pub async fn get_device_logs(
     device_id: i64,
     limit: i64,
@@ -230,7 +247,7 @@ pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {
 
 pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, last_seen_at, created_at \
          FROM devices
          WHERE id = $1
          ORDER BY last_seen_at DESC"
@@ -242,7 +259,7 @@ pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
 
 pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, last_seen_at, created_at \
          FROM devices ORDER BY last_seen_at DESC"
     )
         .fetch_all(get())
@@ -515,6 +532,121 @@ pub async fn delete_http_source(id: i64) -> Result<(), sqlx::error::Error> {
     Ok(())
 }
 
+// --- Firmware releases ---
+//
+// Mechanical mirrors of the range_query / http_source CRUD above (INSERT
+// RETURNING, SELECT list, DELETE by id) — covered by round-trip
+// characterization tests rather than strict test-first, per
+// development-process.md's allowance for near-verbatim CRUD. The one
+// exception is `activate_firmware_release`, which has real branching
+// (deactivate the sibling release before activating the target) and is
+// test-first below.
+
+pub async fn create_firmware_release(
+    model: &str,
+    version: &str,
+    filename: &str,
+    size_bytes: i64,
+    binary: &[u8],
+) -> Result<FirmwareRelease, sqlx::error::Error> {
+    sqlx::query_as(
+        "INSERT INTO firmware_releases (model, version, filename, size_bytes, binary, active, created_at) \
+         VALUES (?, ?, ?, ?, ?, 0, datetime('now')) \
+         RETURNING id, model, version, filename, size_bytes, active, created_at",
+    )
+    .bind(model)
+    .bind(version)
+    .bind(filename)
+    .bind(size_bytes)
+    .bind(binary)
+    .fetch_one(get())
+    .await
+}
+
+pub async fn get_firmware_releases() -> Result<Vec<FirmwareRelease>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, model, version, filename, size_bytes, active, created_at \
+         FROM firmware_releases ORDER BY model ASC, created_at DESC",
+    )
+    .fetch_all(get())
+    .await
+}
+
+pub async fn get_firmware_release(id: i64) -> Result<FirmwareRelease, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, model, version, filename, size_bytes, active, created_at \
+         FROM firmware_releases WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(get())
+    .await
+}
+
+pub async fn get_active_firmware_release(
+    model: &str,
+) -> Result<Option<FirmwareRelease>, sqlx::error::Error> {
+    sqlx::query_as(
+        "SELECT id, model, version, filename, size_bytes, active, created_at \
+         FROM firmware_releases WHERE model = ? AND active = 1",
+    )
+    .bind(model)
+    .fetch_optional(get())
+    .await
+}
+
+/// Filename + raw bytes for the active release of a model, for the device
+/// download endpoint. Kept separate from `FirmwareRelease` so the binary
+/// column is never pulled into the admin list/get queries above.
+pub async fn get_active_firmware_binary(
+    model: &str,
+) -> Result<Option<(String, Vec<u8>)>, sqlx::error::Error> {
+    sqlx::query_as("SELECT filename, binary FROM firmware_releases WHERE model = ? AND active = 1")
+        .bind(model)
+        .fetch_optional(get())
+        .await
+}
+
+/// Deletes only if the release is (still) inactive; returns whether a row
+/// was deleted. The `active = 0` predicate makes the handler's
+/// check-then-delete race-free: a release activated between the handler's
+/// check and this statement survives.
+pub async fn delete_firmware_release_if_inactive(id: i64) -> Result<bool, sqlx::error::Error> {
+    let result = sqlx::query("DELETE FROM firmware_releases WHERE id = ? AND active = 0")
+        .bind(id)
+        .execute(get())
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Activate `id` as the active release for its model, deactivating whichever
+/// release currently holds that spot. `firmware_releases` has a unique index
+/// on `(model) WHERE active = 1`, so leaving the old row active while
+/// flipping the new one on would violate it — this must happen as a
+/// deactivate-then-activate transaction, not a single UPDATE.
+pub async fn activate_firmware_release(id: i64) -> Result<(), sqlx::error::Error> {
+    let mut tx = get().begin().await?;
+    sqlx::query(
+        "UPDATE firmware_releases SET active = 0 \
+         WHERE model = (SELECT model FROM firmware_releases WHERE id = ?)",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    let result = sqlx::query("UPDATE firmware_releases SET active = 1 WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    // Both UPDATEs silently no-op for an unknown id (the subquery yields
+    // NULL), which would turn "activate a release someone just deleted" into
+    // a 204 success. Surface it as RowNotFound instead; the dropped tx
+    // rolls back.
+    if result.rows_affected() == 0 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn copy_template(source_id: i64) -> Result<Template, sqlx::error::Error> {
     let source = get_template_by_id(source_id).await?;
 
@@ -699,7 +831,137 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use test_support::init_test_db;
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_suffix() -> String {
+        format!("{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn test_activate_firmware_release_deactivates_sibling() {
+        init_test_db().await;
+
+        let model = format!("trmnl-og-{}", unique_suffix());
+        let v1 = create_firmware_release(&model, "1.0.0", "fw-1.0.0.bin", 4, b"aaaa")
+            .await
+            .expect("create v1");
+        let v2 = create_firmware_release(&model, "1.1.0", "fw-1.1.0.bin", 4, b"bbbb")
+            .await
+            .expect("create v2");
+
+        activate_firmware_release(v1.id).await.expect("activate v1");
+        let active = get_active_firmware_release(&model)
+            .await
+            .expect("get active")
+            .expect("v1 should be active");
+        assert_eq!(active.id, v1.id);
+
+        // Activating v2 must flip v1 off — the DB has a unique index on
+        // (model) WHERE active = 1, so leaving both on isn't just wrong,
+        // it's unrepresentable.
+        activate_firmware_release(v2.id).await.expect("activate v2");
+        let active = get_active_firmware_release(&model)
+            .await
+            .expect("get active")
+            .expect("v2 should be active");
+        assert_eq!(active.id, v2.id, "activating v2 should supersede v1");
+
+        let v1_after = get_firmware_release(v1.id).await.expect("get v1 after");
+        assert!(!v1_after.active, "v1 should have been deactivated");
+    }
+
+    #[tokio::test]
+    async fn test_firmware_release_crud_round_trip() {
+        init_test_db().await;
+
+        let model = format!("trmnl-crud-{}", unique_suffix());
+        assert_eq!(
+            get_active_firmware_release(&model).await.expect("get active before"),
+            None,
+            "no release should be active before any exist"
+        );
+
+        let created = create_firmware_release(&model, "2.0.0", "fw-2.0.0.bin", 4, b"cccc")
+            .await
+            .expect("create release");
+        assert_eq!(created.model, model);
+        assert_eq!(created.version, "2.0.0");
+        assert_eq!(created.size_bytes, 4);
+        assert!(!created.active, "newly created releases start inactive");
+
+        let listed = get_firmware_releases().await.expect("list releases");
+        assert!(listed.iter().any(|r| r.id == created.id));
+
+        let binary = get_active_firmware_binary(&model)
+            .await
+            .expect("get active binary");
+        assert_eq!(binary, None, "inactive release should not be returned as active");
+
+        activate_firmware_release(created.id).await.expect("activate");
+        let (filename, bytes) = get_active_firmware_binary(&model)
+            .await
+            .expect("get active binary after activate")
+            .expect("should have an active binary now");
+        assert_eq!(filename, "fw-2.0.0.bin");
+        assert_eq!(bytes, b"cccc");
+
+        // The delete predicate refuses while active…
+        let deleted = delete_firmware_release_if_inactive(created.id)
+            .await
+            .expect("attempt delete of active release");
+        assert!(!deleted, "an active release must survive the delete");
+
+        // …and succeeds once a sibling supersedes it.
+        let v2 = create_firmware_release(&model, "2.1.0", "fw-2.1.0.bin", 4, b"dddd")
+            .await
+            .expect("create superseding release");
+        activate_firmware_release(v2.id).await.expect("activate v2");
+        let deleted = delete_firmware_release_if_inactive(created.id)
+            .await
+            .expect("delete deactivated release");
+        assert!(deleted, "a deactivated release should be deletable");
+        let after_delete = get_firmware_releases().await.expect("list after delete");
+        assert!(!after_delete.iter().any(|r| r.id == created.id));
+    }
+
+    #[tokio::test]
+    async fn test_update_device_firmware_updates_enabled_round_trip() {
+        init_test_db().await;
+
+        let suffix = unique_suffix();
+        let device = create_device(
+            &format!("fw-toggle-token-{suffix}"),
+            Some(&format!("aa:bb:cc:dd:ee:{suffix}")),
+            Some("trmnl-og"),
+            &format!("fw-toggle-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device");
+        assert!(
+            !device.firmware_updates_enabled,
+            "firmware updates should default off"
+        );
+
+        update_device_firmware_updates_enabled(device.id, true)
+            .await
+            .expect("enable firmware updates");
+        let after = get_device(device.id).await.expect("get device after enable");
+        assert!(after.firmware_updates_enabled);
+
+        update_device_firmware_updates_enabled(device.id, false)
+            .await
+            .expect("disable firmware updates");
+        let after = get_device(device.id).await.expect("get device after disable");
+        assert!(!after.firmware_updates_enabled);
+    }
 
     #[tokio::test]
     async fn test_range_query_crud_round_trip() {

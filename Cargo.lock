@@ -5328,6 +5328,7 @@ dependencies = [
  "hyper-util",
  "image",
  "itertools",
+ "js-sys",
  "liquid",
  "liquid-core",
  "names",

@@ -1,6 +1,7 @@
 mod ai_template_generator;
 mod dashboard;
 mod devices;
+mod firmware;
 mod login;
 mod setup;
 mod template_editor;
@@ -10,6 +11,7 @@ mod users;
 pub use ai_template_generator::AiTemplateGenerator;
 pub use dashboard::Dashboard;
 pub use devices::{DeviceDetail, Devices};
+pub use firmware::Firmware;
 pub use login::Login;
 pub use setup::Setup;
 pub use template_editor::TemplateEditor;
