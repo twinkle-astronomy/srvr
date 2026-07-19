@@ -13,7 +13,7 @@ base64 = "0.22"
 
 # Server-only dependencies (not WASM-compatible)
 ring = { version = "0.17", optional=true }
-axum = { version = "0.8", optional = true }
+axum = { version = "0.8", features = ["multipart"], optional = true }
 tokio = { version = "1", features = ["sync", "macros", "time"] }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "fs"], optional = true }
@@ -40,8 +40,9 @@ tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"], optional 
 tokio-stream = { version = "0.1", features = ["sync"], optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls"], optional = true }
 rustls-acme = { version = "0.15", features = ["axum"], optional = true }
-web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event"], optional = true }
+web-sys = { version = "0.3", features = ["EventSource", "MessageEvent", "Event", "Blob", "FormData", "Window", "Document", "Element", "HtmlInputElement"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
 gloo-net = { version = "0.6", features = ["http"], optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
@@ -53,7 +54,7 @@ http-body-util = "0.1"
 # Browser E2E tier (tests/browser_e2e.rs): fantoccini drives real Chromium via
 # chromedriver; reqwest seeds fixtures over HTTP against the spawned server.
 fantoccini = { version = "0.21", default-features = false, features = ["rustls-tls"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 # rustls 0.23 needs a process-level CryptoProvider chosen explicitly; the E2E
 # harness installs the ring provider before any TLS client is built.
 rustls = { version = "0.23", features = ["ring"] }
@@ -66,7 +67,7 @@ rustls = { version = "0.23", features = ["ring"] }
 strip = "debuginfo"
 
 [features]
-web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:gloo-net", "dep:gloo-timers", "dep:futures-util"]
+web = ["dioxus/web", "dep:web-sys", "dep:wasm-bindgen", "dep:js-sys", "dep:gloo-net", "dep:gloo-timers", "dep:futures-util"]
 server = [
     "dioxus/server",
     "tokio/full",

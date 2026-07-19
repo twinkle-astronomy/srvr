@@ -221,7 +221,7 @@ mod tests {
                 "id": 0, "access_token": "", "mac_address": "00:00:00:00:00:00",
                 "model": "Virtual", "friendly_id": "virtual-device", "fw_version": null,
                 "width": 10, "height": 10, "battery_voltage": null, "rssi": null,
-                "template_id": 0, "maximum_compatibility": false,
+                "template_id": 0, "maximum_compatibility": false, "firmware_updates_enabled": false,
                 "last_seen_at": "", "created_at": ""
             },
             "template": {

@@ -246,6 +246,29 @@ async fn seed_device(base: &str, mac: &str) {
     assert!(resp.status().is_success(), "device setup: {}", resp.status());
 }
 
+/// Upload a firmware release the way the admin UI does (multipart), return its id.
+async fn seed_firmware_release(base: &str, cookie: &str, model: &str, version: &str) -> i64 {
+    let form = reqwest::multipart::Form::new()
+        .text("model", model.to_string())
+        .text("version", version.to_string())
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(b"fake-firmware-bytes".to_vec())
+                .file_name("fw.bin")
+                .mime_str("application/octet-stream")
+                .unwrap(),
+        );
+    let resp = http()
+        .post(format!("{base}/dashboard/firmware"))
+        .header("Cookie", cookie)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "upload firmware: {}", resp.status());
+    resp.json::<Value>().await.unwrap()["id"].as_i64().unwrap()
+}
+
 async fn get_json(base: &str, cookie: &str, path: &str) -> Value {
     http()
         .get(format!("{base}{path}"))
@@ -278,6 +301,25 @@ async fn login(c: &Client, base: &str, user: &str, pass: &str) -> R {
         .await
         .map_err(|e| format!("login as {user:?}: authenticated shell (Logout button) never appeared: {e}"))?;
     Ok(())
+}
+
+/// Wait until the element matching `css`'s live `value` DOM property equals
+/// `expected`. `wait_for_text` doesn't work here: an `<input>`'s current
+/// value is a DOM property, not text content, so XPath text matching never
+/// sees it.
+async fn wait_for_input_value(c: &Client, css: &str, expected: &str) -> R {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if let Ok(el) = c.find(Locator::Css(css)).await {
+            if el.prop("value").await?.as_deref() == Some(expected) {
+                return Ok(());
+            }
+        }
+        if Instant::now() > deadline {
+            return Err(format!("{css} never reached value {expected:?}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// Wait until an element whose visible text contains `needle` exists.
@@ -468,6 +510,305 @@ async fn editing_a_template_persists() -> R {
             "edited content should be saved, got: {}",
             t["content"]
         );
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn activating_a_firmware_release_shows_the_active_badge() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+    let v1 = seed_firmware_release(&server.base, &cookie, "og_plus", "1.0.0").await;
+    let _v2 = seed_firmware_release(&server.base, &cookie, "og_plus", "1.1.0").await;
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/firmware", server.base)).await?;
+
+        // Both uploaded releases are listed, grouped under their model.
+        wait_for_text(&c, "og_plus").await?;
+        wait_for_text(&c, "1.0.0").await?;
+        wait_for_text(&c, "1.1.0").await?;
+        // Exact-text match: contains() would also hit the "Activate" buttons.
+        assert!(
+            c.find_all(Locator::XPath("//span[normalize-space(.)='Active']")).await?.is_empty(),
+            "neither release should be active before either is activated"
+        );
+
+        // Activate the first release from the UI.
+        c.find(Locator::XPath(
+            "//p[contains(., '1.0.0')]/ancestor::div[contains(@class, 'flex items-center justify-between')][1]//button[contains(., 'Activate')]",
+        ))
+        .await?
+        .click()
+        .await?;
+        // Wait for the badge span by exact text — wait_for_text("Active")
+        // would match the sibling "Activate" button as a substring and
+        // return before the activate round-trip finishes.
+        c.wait()
+            .at_most(WAIT)
+            .for_element(Locator::XPath("//span[normalize-space(.)='Active']"))
+            .await?;
+
+        // Persisted server-side, and the DB-level "one active per model" constraint holds.
+        let active = get_json(&server.base, &cookie, "/dashboard/firmware").await;
+        let active_release = active
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"].as_i64() == Some(v1))
+            .unwrap();
+        assert_eq!(active_release["active"], json!(true));
+
+        // The now-active release's Delete button is disabled client-side
+        // (the plan calls for this: "Delete (disabled if active)") — the
+        // server's 409-on-delete-active-release is defense in depth behind
+        // a control the UI never lets a user actually press.
+        let delete_btn = c
+            .find(Locator::XPath(
+                "//p[contains(., '1.0.0')]/ancestor::div[contains(@class, 'flex items-center justify-between')][1]//button[contains(., 'Delete')]",
+            ))
+            .await?;
+        assert!(
+            delete_btn.attr("disabled").await?.is_some(),
+            "Delete must be disabled for the active release"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn enabling_firmware_updates_on_a_device_persists() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+    seed_device(&server.base, "AA:BB:CC:DD:EE:02").await;
+
+    let devices = get_json(&server.base, &cookie, "/dashboard/devices").await;
+    let device_id = devices[0]["id"].as_i64().unwrap();
+    assert_eq!(
+        devices[0]["firmware_updates_enabled"],
+        json!(false),
+        "should default off"
+    );
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/devices/{}", server.base, device_id)).await?;
+        wait_for_text(&c, "Firmware Updates").await?;
+
+        // The checkbox itself is `sr-only` (visually hidden); a real user
+        // clicks the wrapping `<label>` (the visible pill), which forwards
+        // the click to its associated `<input>` per normal HTML semantics.
+        c.find(Locator::XPath(
+            "//h2[contains(., 'Firmware Updates')]/following-sibling::div[1]//label",
+        ))
+        .await?
+        .click()
+        .await?;
+        wait_for_text(&c, "Saved!").await?;
+
+        let device = get_json(&server.base, &cookie, &format!("/dashboard/devices/{device_id}")).await;
+        assert_eq!(device["firmware_updates_enabled"], json!(true));
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn selecting_a_firmware_binary_prefills_the_embedded_version() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+
+    // A synthetic ESP-IDF app image matching what parse_esp_app_version
+    // expects (src/frontend/pages/firmware.rs): esp_image_header_t (24B) +
+    // esp_image_segment_header_t (8B) = 32B, then esp_app_desc_t with its
+    // real magic word and an embedded version string at struct offset 16.
+    let mut image = vec![0u8; 32 + 256];
+    image[0] = 0xE9; // ESP_IMAGE_HEADER_MAGIC
+    image[32..36].copy_from_slice(&0xABCD5432u32.to_le_bytes()); // ESP_APP_DESC_MAGIC_WORD
+    let version = b"9.9.9-e2e";
+    image[48..48 + version.len()].copy_from_slice(version);
+    let image_bytes: Vec<Value> = image.iter().map(|b| json!(b)).collect();
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/firmware", server.base)).await?;
+        c.wait().at_most(WAIT).for_element(Locator::Css("#fw_file")).await?;
+
+        // Headless Chrome has no OS file dialog, and the `chrome` container
+        // shares no filesystem with this test process (see
+        // docker-compose.yml — only `srvr` mounts `.:/app`), so a real
+        // `send_keys(path)` upload isn't reachable from here. Synthesize the
+        // File entirely in-browser via DataTransfer instead: this drives the
+        // exact same `onchange` -> FormEvent::files() -> read_bytes() path a
+        // real file-picker selection would, just without a real OS dialog.
+        c.execute(
+            r#"
+            const bytes = new Uint8Array(arguments[0]);
+            const file = new File([bytes], "fw.bin", {type: "application/octet-stream"});
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const input = document.getElementById("fw_file");
+            input.files = dt.files;
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+            "#,
+            vec![Value::Array(image_bytes)],
+        )
+        .await?;
+
+        // The version field should auto-populate from the embedded esp_app_desc_t.
+        wait_for_input_value(&c, "#fw_version", "9.9.9-e2e").await?;
+
+        // It's still a normal editable field (manual fallback) — prove that
+        // by overriding it, then submit and confirm the *typed* value wins.
+        let version_field = c.find(Locator::Css("#fw_version")).await?;
+        version_field.clear().await?;
+        version_field.send_keys("9.9.9-manual-override").await?;
+        c.find(Locator::Css("#fw_model")).await?.send_keys("e2e-esp-model").await?;
+        c.find(Locator::XPath("//button[contains(., 'Upload')]")).await?.click().await?;
+        wait_for_text(&c, "e2e-esp-model").await?;
+
+        // A successful upload must fully reset the form — including the
+        // uncontrolled file input (remounted via a key bump), which would
+        // otherwise keep displaying the old file while selected_file is
+        // None, making the next submit fail confusingly.
+        wait_for_input_value(&c, "#fw_version", "").await?;
+        wait_for_input_value(&c, "#fw_file", "").await?;
+
+        let releases = get_json(&server.base, &cookie, "/dashboard/firmware").await;
+        let uploaded = releases
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["model"] == json!("e2e-esp-model"))
+            .expect("uploaded release should be listed");
+        assert_eq!(
+            uploaded["version"],
+            json!("9.9.9-manual-override"),
+            "manually overriding the pre-filled version must win"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn selecting_a_multi_segment_firmware_binary_still_detects_the_version() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    seed_admin(&server.base, "admin", "hunter2").await;
+
+    // First 192 bytes of a real device's firmware (`firmware-0.2.1.bin`,
+    // ESP32-S3 + Rust/embassy). Regression fixture: this toolchain inserts
+    // an extra 24-byte leading segment before esp_app_desc_t, landing the
+    // descriptor at file offset 64 rather than the 32 a "fixed offset"
+    // assumption predicts — parse_esp_app_version originally missed this
+    // and silently left the version field empty. Same bytes as
+    // REAL_ESP32S3_EMBASSY_HEADER in src/frontend/pages/firmware.rs.
+    #[rustfmt::skip]
+    let image: Vec<u8> = vec![
+        0xe9, 0x07, 0x02, 0x20, 0x14, 0x88, 0x37, 0x40, 0xee, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00,
+        0x00, 0x63, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xf8, 0xfc, 0xc8, 0x3f, 0x18, 0x00, 0x00, 0x00,
+        0x0a, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+        0x05, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x40, 0x00, 0x0d, 0x3c, 0xcc, 0x47, 0x04, 0x00,
+        0x32, 0x54, 0xcd, 0xab, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x30, 0x2e, 0x32, 0x2e, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x65, 0x73, 0x70, 0x33, 0x32, 0x73, 0x33, 0x2d, 0x65, 0x6d, 0x62, 0x61, 0x73, 0x73, 0x79, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x4a, 0x61, 0x6e, 0x20, 0x20, 0x31, 0x20, 0x32, 0x30, 0x32, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x76, 0x35, 0x2e, 0x35, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let image_bytes: Vec<Value> = image.iter().map(|b| json!(b)).collect();
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/firmware", server.base)).await?;
+        c.wait().at_most(WAIT).for_element(Locator::Css("#fw_file")).await?;
+
+        c.execute(
+            r#"
+            const bytes = new Uint8Array(arguments[0]);
+            const file = new File([bytes], "firmware-0.2.1.bin", {type: "application/octet-stream"});
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const input = document.getElementById("fw_file");
+            input.files = dt.files;
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+            "#,
+            vec![Value::Array(image_bytes)],
+        )
+        .await?;
+
+        wait_for_input_value(&c, "#fw_version", "0.2.1").await?;
+        // Detection is reported explicitly, not a silent side effect.
+        wait_for_text(&c, "Detected version").await?;
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn selecting_a_non_esp_file_reports_detection_failure_instead_of_silence() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    seed_admin(&server.base, "admin", "hunter2").await;
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/firmware", server.base)).await?;
+        c.wait().at_most(WAIT).for_element(Locator::Css("#fw_file")).await?;
+
+        // 256 zero bytes: not an ESP image at all (wrong magic byte).
+        c.execute(
+            r#"
+            const bytes = new Uint8Array(256);
+            const file = new File([bytes], "not-firmware.bin", {type: "application/octet-stream"});
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const input = document.getElementById("fw_file");
+            input.files = dt.files;
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+            "#,
+            vec![],
+        )
+        .await?;
+
+        // Avoid an apostrophe in the needle — wait_for_text builds a naive
+        // single-quoted XPath literal that can't contain one.
+        wait_for_text(&c, "auto-detect a version").await?;
+        // And the version field must still be empty and freely typeable —
+        // detection failing must not block the manual fallback.
+        let version_field = c.find(Locator::Css("#fw_version")).await?;
+        assert_eq!(version_field.prop("value").await?.as_deref(), Some(""));
+        version_field.send_keys("7.0.0").await?;
+        assert_eq!(version_field.prop("value").await?.as_deref(), Some("7.0.0"));
         Ok(())
     }
     .await;

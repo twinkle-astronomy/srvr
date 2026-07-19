@@ -25,6 +25,7 @@ pub fn Nav() -> Element {
                     NavLink { to: Route::Devices {}, label: "Devices" }
                     NavLink { to: Route::Templates {}, label: "Templates" }
                     NavLink { to: Route::Users {}, label: "Users" }
+                    NavLink { to: Route::Firmware {}, label: "Firmware" }
                 }
                 button {
                     r#type: "button",
