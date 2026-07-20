@@ -4,16 +4,17 @@
 
 ## Overview
 The server currently renders a Liquid SVG template to a 1‑bit BMP (`/render/screen.bmp`). To support 2‑bit grayscale we will:
-1. Detect device capability via a request header or query parameter.
+1. Detect device capability via a **device‑model flag** (`supports_2bit_grayscale`) stored in the database.
 2. Render the SVG to an intermediate PNG (800 × 480).
 3. Convert that PNG to a true 2‑bit image using Rust’s `image` crate.
 4. Sign and serve the resulting PNG URL, falling back to BMP for devices without the capability flag.
 
 ## Detailed Steps
 ### 1️⃣ Device Capability Detection
-- Extend `/api/display` request handling (`src/api/display.rs`) to read a new header `X‑TRMNL‑BITDEPTH`. Accept values `1` (default) or `2`.
-- Add a query param fallback `?bitdepth=2` for devices that cannot set custom headers.
-- Propagate the detected depth through the request context (`RequestContext`) to the rendering pipeline.
+- Extend `/api/display` handling (`src/api/display.rs`) to look up a **device‑model flag** indicating grayscale support. Add a new column `supports_2bit_grayscale BOOLEAN` (default `false`) to the `devices` table.
+- When a poll request arrives, read the device’s model from the existing payload, query the DB for that flag, and store the result in the request context (`RequestContext`).
+- Devices with `supports_2bit_grayscale = true` will receive a 2‑bit PNG; all others fall back to the existing BMP path.
+
 
 ### 2️⃣ Render SVG → PNG (intermediate)
 - Re‑use existing Liquid template rendering logic (`src/render/template.rs`).
@@ -50,7 +51,7 @@ pub fn convert_to_2bit(img: DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
 - Update the JSON response schema in `docs/api.md` to include `image_url: String` and an optional `bitdepth: u8` field for clarity.
 
 ### 5️⃣ Fallback & Backward Compatibility
-- Devices that do not send the header will continue receiving the signed BMP URL unchanged.
+- Devices whose `supports_2bit_grayscale` flag is **false** will continue receiving the signed BMP URL unchanged.
 - Add a feature flag (`grayscale_support`) in `Cargo.toml`/`features.rs` so the entire pipeline can be toggled off if needed for debugging.
 
 ### 6️⃣ Tests
@@ -58,21 +59,21 @@ pub fn convert_to_2bit(img: DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
 - Verify `convert_to_2bit` maps pixel ranges correctly.
 - Test that a full‑white PNG becomes all `255`, and a gradient yields only the four expected levels.
 #### Integration test (src/tests/api_grayscale.rs)
-- Spin up an in‑memory Axum server, send `/api/display` with `X‑TRMNL‑BITDEPTH: 2`.
+- Spin up an in‑memory Axum server, send `/api/display` for a device whose `supports_2bit_grayscale` flag is true (e.g., insert a test row into the `devices` table with that flag set).
 - Assert the JSON response contains a signed `.png` URL and that fetching it returns a PNG whose `bit-depth` is reported as `2` (use `image::io::Reader`).
-- Repeat without the header to ensure BMP path remains unchanged.
+- Repeat with a device whose `supports_2bit_grayscale` flag is **false** to ensure the BMP path remains unchanged.
 #### End‑to‑end verification
-- Use the `/verify` skill after implementation to run a headless browser, load the dashboard, and confirm the image URL changes based on the header.
+- Use the `/verify` skill after implementation to run a headless browser, load the dashboard, and confirm the image URL changes based on the device’s `supports_2bit_grayscale` flag.
 
 ### 7️⃣ Documentation Updates
 - **docs/templates.md** – Add a note about grayscale palettes (`#000000 #555555 #aaaaaa #ffffff`).
-- **docs/api.md** – Document the new request header/query param and updated response fields.
+- **docs/api.md** – Document the new device‑model flag (`supports_2bit_grayscale`) and updated response fields.
 - **docs/projects/ideas/2-bit-grayscale-support.md** – Mark as completed (or move to `completed` folder) once the plan is merged.
 
 ## Milestones & Timeline
 | Milestone | Owner | ETA |
 |-----------|-------|-----|
-| Header detection & request context | backend team | 2026‑07‑24 |
+| Device flag detection & request context | backend team | 2026‑07‑24 |
 | PNG rendering pipeline refactor | render team | 2026‑07‑28 |
 | `image` crate conversion module | graphics subteam | 2026‑08‑02 |
 | Signing & URL changes | security team | 2026‑08‑05 |
