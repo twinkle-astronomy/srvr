@@ -60,6 +60,12 @@ async fn get_and_update_device_from_headers(headers: &HeaderMap) -> Result<Devic
     .await?)
 }
 
+// Standard TRMNL OG e-ink resolution — used when a device omits Width/Height
+// on its first registration, since `devices.width`/`height` are NOT NULL and
+// some real-world firmware sends neither header.
+const DEFAULT_DEVICE_WIDTH: i64 = 800;
+const DEFAULT_DEVICE_HEIGHT: i64 = 480;
+
 async fn create_device_from_headers(
     access_token: &str,
     headers: &HeaderMap,
@@ -67,7 +73,12 @@ async fn create_device_from_headers(
     // Extract optional headers for device telemetry
     let mac_address = headers.get("ID").and_then(|h| h.to_str().ok());
     let friendly_id = Generator::default().next().unwrap();
-    let model = headers.get("model").and_then(|h| h.to_str().ok());
+    // `devices.model` is NOT NULL; some real-world firmware never sends a
+    // `model` header, so a missing one defaults rather than failing setup.
+    let model = headers
+        .get("model")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown");
     let battery_voltage = headers
         .get("Battery-Voltage")
         .and_then(|h| h.to_str().ok())
@@ -77,20 +88,22 @@ async fn create_device_from_headers(
     let device_height = headers
         .get("Height")
         .and_then(|h| h.to_str().ok())
-        .and_then(|x| x.parse().ok());
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(DEFAULT_DEVICE_HEIGHT);
     let device_width = headers
         .get("Width")
         .and_then(|h| h.to_str().ok())
-        .and_then(|x| x.parse().ok());
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(DEFAULT_DEVICE_WIDTH);
 
     Ok(create_device(
         access_token,
         mac_address,
-        model,
+        Some(model),
         &friendly_id,
         fw_version,
-        device_width,
-        device_height,
+        Some(device_width),
+        Some(device_height),
         battery_voltage,
         rssi,
     )

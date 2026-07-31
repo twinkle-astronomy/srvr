@@ -291,9 +291,12 @@ pub async fn get_and_update_device_by_access_token(
     battery_voltage: Option<f32>,
     rssi: Option<&str>,
 ) -> Result<Device, sqlx::error::Error> {
+    // model/width/height are NOT NULL; COALESCE keeps the existing value on
+    // a poll that omits one of those headers instead of failing the update
+    // (some real-world firmware only ever sends ID + FW-Version).
     let device_row: SqliteRow = sqlx::query(
         "UPDATE devices \
-        SET mac_address = ?, model = ?, battery_voltage = ?, fw_version = ?, rssi = ?, width = ?, height = ? \
+        SET mac_address = ?, model = COALESCE(?, model), battery_voltage = ?, fw_version = ?, rssi = ?, width = COALESCE(?, width), height = COALESCE(?, height) \
         WHERE access_token = ?
         RETURNING *",
     )
@@ -785,11 +788,33 @@ pub(crate) mod test_support {
     use tokio::sync::OnceCell;
 
     static INIT: OnceCell<()> = OnceCell::const_new();
+    static INIT_TRACING: std::sync::Once = std::sync::Once::new();
+
+    /// `tracing`'s per-callsite `Interest` cache is process-wide: whichever
+    /// subscriber (or lack of one) first evaluates a given `info!`/`error!`
+    /// call site can cache "not interested" for it, silently suppressing
+    /// that call site for every thread afterwards — including a test that
+    /// later installs its own thread-local subscriber via
+    /// `tracing::subscriber::set_default` to capture output, since that
+    /// override only controls *where* an event goes, not whether the cached
+    /// Interest lets it fire at all. Installing one permissive **global**
+    /// default, once, before any test's handlers can run keeps every
+    /// call site's cached Interest at "always fire", so later per-test
+    /// `set_default` overrides route reliably. `call_once` blocks
+    /// concurrent callers until the first one finishes, so this closes the
+    /// race even under parallel test execution.
+    fn ensure_global_tracing_default() {
+        INIT_TRACING.call_once(|| {
+            let subscriber = tracing_subscriber::fmt().with_writer(std::io::sink).finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        });
+    }
 
     /// Initialize a process-wide in-memory SQLite pool with migrations applied,
     /// stored in the same global `POOL` that `db::get()` reads. Idempotent and
     /// safe to call from every test; the first caller wins and the rest reuse it.
     pub async fn init_test_db() {
+        ensure_global_tracing_default();
         INIT.get_or_init(|| async {
             // Each `#[tokio::test]` runs on its own runtime. A plain
             // `sqlite::memory:` database is private to a single connection, so
