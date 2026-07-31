@@ -111,6 +111,7 @@ pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> 
         .route("/api/display", get(display_handler))
         .route("/api/log", post(log_handler))
         .route("/api/setup", get(setup_handler))
+        .route("/api/setup/", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
         .route("/firmware/download", get(firmware_download_handler))
         .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)))
@@ -875,6 +876,32 @@ mod tests {
         assert!(
             output.contains("Battery: None"),
             "expected setup log output to show the parsed (failed) Battery-Voltage as None, got: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_handler_matches_path_with_trailing_slash() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:00:{suffix}");
+
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/setup/")
+                    .header("ID", &mac)
+                    .header("model", "trmnl-og")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/setup/ (trailing slash) should route to the same handler as /api/setup"
         );
     }
 }
