@@ -904,4 +904,104 @@ mod tests {
             "GET /api/setup/ (trailing slash) should route to the same handler as /api/setup"
         );
     }
+
+    #[tokio::test]
+    async fn setup_handler_defaults_missing_model_and_dimensions() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:33:{suffix}");
+
+        // Some real-world firmware sends only ID + FW-Version on setup — no
+        // model/Width/Height/Battery-Voltage/RSSI at all.
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/setup")
+                    .header("ID", &mac)
+                    .header("FW-Version", "1.5.12")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a device that omits model/width/height headers should still complete setup"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let access_token = json["api_key"]
+            .as_str()
+            .expect("successful setup returns an api_key")
+            .to_string();
+
+        let device_id = crate::db::get_device_id_by_access_token(&access_token)
+            .await
+            .expect("lookup device")
+            .expect("device exists");
+        let device = crate::db::get_device(device_id).await.expect("fetch device");
+
+        assert_eq!(device.model, "unknown");
+        assert_eq!(device.width, 800);
+        assert_eq!(device.height, 480);
+    }
+
+    #[tokio::test]
+    async fn display_handler_survives_a_poll_missing_model_and_dimensions() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:44:{suffix}");
+        let device = crate::db::create_device(
+            &format!("poll-preserve-token-{suffix}"),
+            Some(&mac),
+            Some("trmnl-og"),
+            &format!("poll-preserve-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+
+        // A later poll from the same device omits model/Width/Height this
+        // time (as the real device in this bug report does on every
+        // request) — it must not clobber the already-known values.
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/display")
+                    .header("Access-Token", &device.access_token)
+                    .header("ID", &mac)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            json.get("image_url").and_then(|v| v.as_str()).is_some(),
+            "poll missing model/dimensions headers should still succeed, got: {json:?}"
+        );
+
+        let refreshed = crate::db::get_device(device.id).await.expect("fetch device");
+        assert_eq!(
+            refreshed.model, "trmnl-og",
+            "a poll missing the model header must not clobber a previously known model"
+        );
+        assert_eq!(refreshed.width, 800);
+        assert_eq!(refreshed.height, 480);
+    }
 }
