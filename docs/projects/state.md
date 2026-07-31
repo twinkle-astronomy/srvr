@@ -24,6 +24,15 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
   doesn't match the active release for their `model`; the binary is served
   from the signed `GET /firmware/download` route — see
   [completed/20260719-firmware-ota-updates](completed/20260719-firmware-ota-updates.md).
+- Setup/log request debugging: `POST /api/log` logs each submitted log
+  entry's content, and `GET /api/setup` logs all parsed device fields (not
+  just raw headers), so an operator can see what a device sent without DB
+  access. `GET /api/setup/` (trailing slash) is also accepted. A device that
+  omits `model`/`Width`/`Height` (some real-world firmware sends only `ID` +
+  `FW-Version`) still completes setup — those fields default rather than
+  failing the registration, and a later poll missing the same headers won't
+  overwrite already-known values — see
+  [completed/20260730-device-request-logging](completed/20260730-device-request-logging.md).
 
 ### Rendering
 - Liquid template engine with access to device state, time, Prometheus queries (instant and time-range), and HTTP sources
