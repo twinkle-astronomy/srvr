@@ -6,7 +6,7 @@ Add optional generation of 2‑bit (four‑level) grayscale images on the server
 Production TRMNL hardware now supports true 4‑level grayscale after firmware v1.6.x (see GitHub PR #201, blog post “No more flicker”). Enabling this on the backend lets those devices display richer UI without client changes.
 
 ## How
-- Detect device capability via a request header (`X-TRMNL-BITDEPTH: 2`) or query parameter.
+- Detect device capability via a **device‑model flag** (`supports_2bit_grayscale`).
 - Render Liquid SVG to PNG (800×480).
 - Convert PNG to 2‑bit using Rust's `image` crate:
   ```rust
@@ -40,6 +40,6 @@ Production TRMNL hardware now supports true 4‑level grayscale after firmware v
 - Leverages existing signing pipeline.
 
 ## Next Steps
-- Add header detection in `/api/display`.
+- Add device‑model flag detection in `/api/display`.
 - Implement conversion step in Rust using the `image` crate.
 - Write tests covering both 1‑bit and 2‑bit paths.

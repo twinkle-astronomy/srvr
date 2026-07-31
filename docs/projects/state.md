@@ -27,7 +27,7 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 
 ### Rendering
 - Liquid template engine with access to device state, time, Prometheus queries (instant and time-range), and HTTP sources
-- SVG → 1-bit BMP pipeline (usvg → resvg → tiny-skia → BMP encode)
+- SVG → 1-bit BMP pipeline
 - Custom Liquid filters: `qrcode`, `qrcode_wifi`
 - Virtual device for previewing templates without physical hardware
 
