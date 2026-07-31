@@ -285,6 +285,9 @@ async fn log_handler(headers: HeaderMap, Json(payload): Json<LogRequest>) -> imp
     };
 
     info!("Received {} log(s) from device", payload.logs.len());
+    for entry in &payload.logs {
+        info!("Log entry: {:?}", entry);
+    }
 
     let device_id = match get_device_id_by_access_token(access_token).await {
         Ok(Some(id)) => id,
@@ -355,8 +358,15 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     };
 
     info!(
-        "Setup request - MAC: {}, Model: {}, FriendlyID: {}",
-        device.mac_address, device.model, device.friendly_id
+        "Setup request - MAC: {:?}, Model: {:?}, FriendlyID: {}, FW: {:?}, Battery: {:?}, RSSI: {:?}, Width: {:?}, Height: {:?}",
+        device.mac_address,
+        device.model,
+        device.friendly_id,
+        device.fw_version,
+        device.battery_voltage,
+        device.rssi,
+        device.width,
+        device.height
     );
 
     // Broadcast new device for SSE subscribers
@@ -544,9 +554,39 @@ async fn device_stream_handler() -> Sse<impl tokio_stream::Stream<Item = Result<
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
+    use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
 
     use crate::time::MockClock;
+
+    /// Captures everything a `tracing` subscriber writes, so tests can
+    /// assert on the content of `info!`/`error!` log lines.
+    #[derive(Clone, Default)]
+    struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl CapturingWriter {
+        fn contents(&self) -> String {
+            String::from_utf8(self.0.lock().expect("lock captured log buffer").clone())
+                .expect("log output should be valid utf8")
+        }
+    }
+
+    impl std::io::Write for CapturingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("lock captured log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturingWriter {
+        type Writer = CapturingWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
 
     fn sample_release(version: &str) -> FirmwareRelease {
         FirmwareRelease {
@@ -741,5 +781,100 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["update_firmware"], serde_json::json!(false));
         assert!(json.get("firmware_url").is_none() || json["firmware_url"].is_null());
+    }
+
+    #[tokio::test]
+    async fn log_handler_logs_submitted_entry_content() {
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let device = crate::db::create_device(
+            &format!("log-content-token-{suffix}"),
+            Some(&format!("aa:bb:cc:dd:ee:{suffix}")),
+            Some("trmnl-og"),
+            &format!("log-content-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+
+        let writer = CapturingWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        let fingerprint = format!("log-message-fingerprint-{suffix}");
+        let body = serde_json::json!({
+            "logs": [{ "message": fingerprint, "wake_reason": "button_press" }]
+        });
+
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::post("/api/log")
+                    .header("Access-Token", &device.access_token)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        drop(guard);
+        let output = writer.contents();
+        assert!(
+            output.contains(&fingerprint),
+            "expected log output to contain the submitted log entry's message, got: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_handler_logs_parsed_device_fields() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:ff:{suffix}");
+
+        let writer = CapturingWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        // An unparseable Battery-Voltage is silently swallowed to `None` by
+        // `create_device_from_headers` (`.and_then(|x| x.parse().ok())`).
+        // The raw header dump above already echoes the garbage value back,
+        // so it can't distinguish "logs the request" from "logs what was
+        // actually parsed" — asserting on the parsed `None` can only pass
+        // once the parsed-fields line exists.
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/setup")
+                    .header("ID", &mac)
+                    .header("model", "trmnl-og")
+                    .header("Battery-Voltage", "not-a-number")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        drop(guard);
+        let output = writer.contents();
+        assert!(
+            output.contains("Battery: None"),
+            "expected setup log output to show the parsed (failed) Battery-Voltage as None, got: {output}"
+        );
     }
 }
