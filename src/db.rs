@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{fs, path::Path, sync::OnceLock};
 
 use dioxus::prelude::*;
 use sqlx::{
@@ -15,7 +15,14 @@ static POOL: OnceLock<SqlitePool> = OnceLock::new();
 
 pub async fn init() -> &'static SqlitePool {
     let db_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./data/devices.db".to_string());
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///app/.data/data.db".to_string());
+
+    let db_path = db_url.strip_prefix("sqlite://").unwrap_or(&db_url);
+    let path = Path::new(db_path);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("Failed to create directory");
+    }
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
