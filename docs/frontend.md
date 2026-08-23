@@ -56,7 +56,20 @@ second pass is a no-op — that convergence is load-bearing, not incidental.
 A regression test for this class of bug has to count requests over time
 (`switching_preview_device_does_not_loop_requests` in the browser tier uses
 `performance.getEntriesByType('resource')`); each individual request looks
-correct, so only the unbounded repetition is observable.
+correct, so only the unbounded repetition is observable. Two traps when
+writing one:
+
+- **Count every request, not the one the feature is "about".** If the looping
+  code fires several requests in sequence and bails early on supersede, the
+  flood lands on the *first* call in the chain. A counter watching the last
+  one reports single digits while the tab is dying.
+- **Reproduce the whole page.** Anything behind a gate (here, the
+  `has_claude_api_key` check that hides the AI page's chat column and preview
+  panel) must be unlocked in the fixture, or the test exercises a page the
+  user never sees. Assert the gate is open rather than assuming it.
+
+Validate such a test by reintroducing the bug and watching it fail — a
+loop test that has never failed is probably measuring the wrong thing.
 
 ## Global store
 

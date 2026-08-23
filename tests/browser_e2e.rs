@@ -651,6 +651,12 @@ async fn enabling_firmware_updates_on_a_device_persists() -> R {
 /// Resource Timing buffer. Used to assert a bounded number of fetches, which
 /// is the only way to catch a reactive-loop regression from the outside: the
 /// symptom is unbounded *repetition* of a request that is individually correct.
+///
+/// Count broadly. An earlier version of this helper watched only
+/// `/dashboard/preview` and passed against a live loop, because the switch
+/// effect fires three sequential fetches and superseded iterations bail out
+/// after the first — so the flood lands on the *earliest* call in the chain,
+/// not the one the feature is "about".
 async fn resource_request_count(c: &Client, needle: &str) -> Result<u64, Box<dyn std::error::Error>> {
     let script = format!(
         "return window.performance.getEntriesByType('resource') \
@@ -660,13 +666,38 @@ async fn resource_request_count(c: &Client, needle: &str) -> Result<u64, Box<dyn
     Ok(v.as_u64().unwrap_or(0))
 }
 
+/// Names the busiest `/dashboard/*` path since the buffer was last cleared —
+/// so a failure says *which* request is looping instead of just "too many".
+async fn busiest_dashboard_path(c: &Client) -> Result<String, Box<dyn std::error::Error>> {
+    let script = "\
+        var counts = {}; \
+        window.performance.getEntriesByType('resource').forEach(function (e) { \
+            var i = e.name.indexOf('/dashboard/'); \
+            if (i === -1) return; \
+            var p = e.name.slice(i).split('?')[0]; \
+            counts[p] = (counts[p] || 0) + 1; \
+        }); \
+        var out = Object.keys(counts).map(function (k) { return k + '=' + counts[k]; }); \
+        out.sort(function (a, b) { \
+            return parseInt(b.split('=')[1]) - parseInt(a.split('=')[1]); \
+        }); \
+        return out.slice(0, 5).join(', ');";
+    let v = c.execute(script, vec![]).await?;
+    Ok(v.as_str().unwrap_or("").to_string())
+}
+
 #[tokio::test]
 async fn switching_preview_device_does_not_loop_requests() -> R {
     let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
     let _guard = test_lock().lock().await;
     let server = Server::start().await;
     let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+
+    // Two real devices, mirroring the reported setup: a 1-bit one and a 2-bit
+    // one, so the switch is between two real devices and crosses a mode
+    // boundary — not just Virtual -> device.
     seed_device(&server.base, "AA:BB:CC:DD:EE:05").await;
+    seed_device(&server.base, "AA:BB:CC:DD:EE:06").await;
     let template_id = seed_template(
         &server.base,
         &cookie,
@@ -675,48 +706,91 @@ async fn switching_preview_device_does_not_loop_requests() -> R {
     )
     .await;
 
-    // Give the one device 2-bit mode, so picking it is a genuine mode change.
     let devices = get_json(&server.base, &cookie, "/dashboard/devices").await;
-    let device_id = devices[0]["id"].as_i64().unwrap();
+    assert_eq!(devices.as_array().unwrap().len(), 2, "need two devices");
+    let grayscale_id = devices[1]["id"].as_i64().unwrap();
     http()
-        .post(format!("{}/dashboard/devices/{device_id}/grayscale", server.base))
+        .post(format!("{}/dashboard/devices/{grayscale_id}/grayscale", server.base))
         .header("cookie", &cookie)
         .json(&json!({ "enabled": true }))
         .send()
         .await
         .unwrap();
 
+    // Essential to the repro: without a key the page renders *only* the
+    // header, hiding the chat column and preview panel behind the `has_key`
+    // gate. A real user has a key, so the full page — and every effect and
+    // signal read in it — is live. The key is never called here; only its
+    // presence is checked, to unlock the rest of the UI.
+    let resp = http()
+        .put(format!("{}/dashboard/claude-api-key", server.base))
+        .header("cookie", &cookie)
+        .json(&json!({ "key": "sk-ant-e2e-not-a-real-key" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "seeding claude key: {}", resp.status());
+
     let c = browser(&endpoint).await;
     let result = async {
         login(&c, &server.base, "admin", "hunter2").await?;
         c.goto(&format!("{}/template/{}/generate", server.base, template_id))
             .await?;
-        // The selector renders above the API-key gate, so no Claude key needed.
         c.wait()
             .at_most(WAIT)
-            .for_element(Locator::XPath(&format!(
-                "//select//option[contains(., '{}')]",
-                devices[0]["friendly_id"].as_str().unwrap()
-            )))
+            .for_element(Locator::XPath("//select//option[contains(., '2-bit')]"))
             .await?;
+        // Confirm the full page really is rendered — if the key gate were
+        // still closed this test would silently go back to exercising only
+        // the header.
+        // Guard the setup itself. Without these the test can silently decay
+        // into exercising only the page header — which is exactly how the
+        // first version of this test passed against a live loop.
+        let gated = c
+            .execute(
+                "return document.body.innerText.indexOf('No Claude API key configured') !== -1;",
+                vec![],
+            )
+            .await?;
+        assert_eq!(
+            gated.as_bool(),
+            Some(false),
+            "the Claude-key gate must be open, or the chat column and preview panel \
+             never render and the loop has nothing to run in"
+        );
+        let n_options = c
+            .execute("return document.querySelectorAll('select option').length;", vec![])
+            .await?;
+        assert_eq!(
+            n_options.as_u64(),
+            Some(3),
+            "expected Virtual + two seeded devices in the preview selector"
+        );
 
-        let before = resource_request_count(&c, "/dashboard/preview").await?;
+        // Settle the initial page load, then measure only what the switch
+        // itself causes.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        c.execute("window.performance.clearResourceTimings();", vec![]).await?;
 
-        // Switch from the default (Virtual, index 0) to the real 2-bit device.
+        // Options are [Virtual, device0 (1-bit), device1 (2-bit)]. Select the
+        // 1-bit device first, so the page sits on a real 1-bit device exactly
+        // as reported, then switch to the 2-bit one.
         c.find(Locator::Css("select")).await?.select_by_value("1").await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        c.execute("window.performance.clearResourceTimings();", vec![]).await?;
 
-        // Let any loop run: a device switch should cost exactly one preview
-        // fetch, so even a slow-but-bounded implementation lands in single
-        // digits. The buggy version fires continuously — the effect subscribed
-        // to the same `generation` signal it wrote, retriggering itself.
+        c.find(Locator::Css("select")).await?.select_by_value("2").await?;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        let after = resource_request_count(&c, "/dashboard/preview").await?;
 
-        let fired = after.saturating_sub(before);
+        // Count *all* dashboard traffic: a switch costs a render-context, a
+        // context, and a preview — call it under a dozen with retries. A loop
+        // produces hundreds.
+        let fired = resource_request_count(&c, "/dashboard/").await?;
+        let breakdown = busiest_dashboard_path(&c).await?;
         assert!(
-            fired <= 5,
-            "switching preview device should trigger ~1 preview fetch, got {fired} in 3s \
-             — a reactive loop is re-running the switch effect"
+            fired <= 12,
+            "switching preview device should cost a handful of requests, got {fired} in 3s \
+             — a reactive loop is re-running the switch effect. Busiest paths: {breakdown}"
         );
         Ok(())
     }
