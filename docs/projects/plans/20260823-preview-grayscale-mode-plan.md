@@ -32,7 +32,9 @@ This closes that gap in all three preview surfaces:
 - `src/frontend/pages/devices.rs` — data URL mime
 - `src/frontend/pages/template_editor/template_preview.rs` — data URL mime
 - `src/frontend/pages/template_editor/template_form.rs` — use the shared selector
-- `src/frontend/pages/ai_template_generator/mod.rs` — data URL mime, device dropdown, per-device render context
+- `src/frontend/pages/ai_template_generator/mod.rs` — data URL mime, device
+  dropdown, per-device render context, generation bump on switch (§4),
+  grayscale-aware system prompt (§4b)
 - `src/frontend/components/` — new shared `PreviewDeviceSelector` (see Decision 3)
 
 ## How
@@ -92,16 +94,61 @@ retargeted at `/preview`.
 ### 4. AI generator: add a Preview Device dropdown
 
 The page currently hardcodes `get_virtual_render_context(id)`. It gains the
-same device selection the manual editor has:
+same device selection the manual editor has — but this page has more moving
+parts than the manual editor, and the details below were **verified against
+the code**, correcting an earlier draft of this plan that asserted them from
+assumption:
 
-- selecting a device swaps the render context via
-  `get_render_context_for_template(device_id, template_id)`,
-- **if an unsaved proposal exists, re-render that proposal** for the newly
-  selected device rather than reverting the preview to the saved template —
-  otherwise switching devices silently discards what Claude just produced
-  from view (the proposal itself stays in `proposal`, so Save is unaffected),
-- the device is read at render time by the existing `build_inline_render_context`
-  call, so subsequent Claude renders target the selected device too.
+- Selecting a device swaps the render context via
+  `get_render_context_for_template(device_id, template_id)`.
+
+- **The proposal survives a switch.** Confirmed: `proposal` is a separate
+  signal from `render_context`, and `assemble_render_context` (`api/mod.rs:74`)
+  fetches queries by `template.id`, not by device — so refetching the context
+  for a different device returns identical query lists. Save reads `proposal()`
+  for content and `ctx` only for the template id + delete-list, both
+  device-independent. Switching devices cannot corrupt a pending Save.
+
+- **The device is snapshotted per-send, not per-render.** `mod.rs:518` does
+  `let device = ctx.device.clone()` once inside `send_message` and moves it
+  into the tool-call closure; `mod.rs:551` clones that captured value per
+  call. So an in-flight turn keeps rendering for whichever device was
+  selected when Send was pressed. The *next* turn picks up the new device
+  because `send_message` re-reads `render_context()` at `mod.rs:476`.
+  Keeping a turn internally consistent is the right behavior — but it means:
+
+- **A device switch mid-turn races the in-flight render.** The switch handler
+  re-renders the proposal for the new device and sets `preview_image`; the
+  in-flight `render_template` then completes and overwrites it at `mod.rs:398`
+  with a render for the *old* device. The existing generation counter does
+  **not** cover this — a device switch doesn't bump `generation`, so the stale
+  write lands. Fix: bump `generation` on device switch too, which makes the
+  existing guard at `mod.rs:391` drop the superseded render. (Disabling the
+  dropdown while `busy` is the cheaper alternative, but it blocks a
+  legitimate action for the length of a multi-tool-call turn.)
+
+- **The initial load must not clobber the proposal.** The `use_resource` at
+  `mod.rs:699` sets `preview_image` from the *saved* template. It cannot
+  simply gain a dependency on the selected device, or every switch would
+  overwrite the proposal preview. The device-switch path stays separate:
+  refetch context, then re-render `proposal()` if one exists, else the saved
+  template.
+
+### 4b. The system prompt hardcodes 1-bit — it has to vary by device
+
+`build_system_prompt` (`mod.rs:208-218`) currently tells Claude the output is
+"converted to a **1-bit black/white BMP**" and to "use only black and white
+(**no grayscale** or color; the display is 1-bit)".
+
+Selecting a 2-bit device while leaving that text in place would leave the
+feature half-wired: the preview would be grayscale-capable, but Claude would
+still be under explicit instructions not to produce grayscale. The prompt
+must branch on `ctx.device.supports_2bit_grayscale`, telling Claude it has
+four levels available (`#000000 #555555 #aaaaaa #ffffff`) when the selected
+device supports them.
+
+This is rebuilt per send (`mod.rs:517`), so a switch between turns takes
+effect on the next turn with no extra plumbing.
 
 ### 5. Shared `PreviewDeviceSelector`
 
@@ -142,6 +189,16 @@ the preview looks different — e.g. `kitchen-display (800×480, 2-bit)`.
    manual-editor behavior for anyone who owns devices (they gain an option
    they didn't have). I think that's a fix, not a regression, but it is a
    visible change to a page this feature didn't otherwise need to touch.
-4. **Not in scope:** dithering (previews will band exactly as the device
+4. **Mid-turn device switch (§4)** — recommend bumping `generation` so the
+   existing supersede guard drops the stale render. The alternative (disable
+   the dropdown while `busy`) is simpler but blocks a legitimate action for
+   the length of a multi-tool-call turn. Either is defensible; say if you'd
+   prefer the simpler one.
+5. **Telling Claude about grayscale (§4b)** — this makes the AI page actually
+   *use* the extra levels rather than just previewing them accurately. It
+   does mean Claude produces different output for a 2-bit device than a 1-bit
+   one for the same prompt, which is the point, but is worth being explicit
+   about since it changes generated-template content, not just rendering.
+6. **Not in scope:** dithering (previews will band exactly as the device
    will, which is arguably correct), and capability auto-detection — both are
    listed as follow-ups in the grayscale project's Limitations.
