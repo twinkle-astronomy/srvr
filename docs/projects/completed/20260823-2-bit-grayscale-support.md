@@ -227,38 +227,29 @@ wasm32-unknown-unknown` clean. Two tests pin the ends of the feature:
   passes a validated test and still misbehaves in the browser is a stale
   bundle until proven otherwise.
 
-**What to change (proposed, not yet applied)**
+**What to change (confirmed and applied)**
 
-Three candidate rules for
-[development-process.md](../../development-process.md#rules), pending
-confirmation:
+All seven proposals were confirmed and are now rules in
+[development-process.md](../../development-process.md#rules):
 
-- *A plan is not self-consistent until its examples and its assertions
-  describe the same artifact.* When a code sample and its test step
-  disagree, that's a design decision surfacing late, not a detail to smooth
-  over — stop and settle it before implementing either.
-- *A new setting isn't done until it's reachable **and observable**.* When a
-  plan is silent on how a flag gets set, treat "settable from the UI it lives
-  next to" as default scope — and ask what the user sees after flipping it.
-  This project shipped the same omission twice: no toggle, then no visible
-  effect from the toggle.
-- *Don't state behavior of existing code in a plan without reading it.* A
-  plan exists to be checkable before implementation; assertions in one carry
-  the weight of verified fact. Read the code, or mark the claim as an
-  assumption to confirm.
-- *Exercise the control you just added, in the browser, before calling it
-  done.* The device-page preview got an E2E test; the dropdown that was the
-  actual new interaction did not, and that is exactly where the loop lived.
-  A new interactive control needs a test that operates it — rendering it
-  is not exercising it. (Now documented as a hazard in
-  [frontend.md](../../frontend.md#never-write-a-signal-a-use_effect-also-reads).)
-- *Check how a test fails, not just that it does.* A test that fails by
-  crashing the browser is not the same as one that fails on its assertion;
-  the first tells you nothing about whether the assertion works.
-- *When a frontend fix appears not to take, suspect the bundle first.*
-  `dx build --platform web`, restart, hard-reload — before re-opening the
-  diagnosis or rewriting tests. A stale WASM bundle is indistinguishable
-  from a fix that didn't work.
-- *After adding a struct field, grep for hand-authored JSON fixtures of
-  that struct* (`grep -rln '"sibling_field_name"'`) — this repo has at
-  least one, and no compiler check covers it.
+- *A plan isn't self-consistent until its examples and its assertions
+  describe the same artifact* — the encoder snippet could only emit an 8-bit
+  PNG while the test step asserted bit depth 2.
+- *A new setting isn't done until it's reachable **and** observable* — this
+  project shipped the same omission twice: no toggle, then no visible effect
+  from the toggle.
+- *Don't state behavior of existing code without reading it* — applies to
+  plans and to failure diagnoses alike; both were asserted wrongly here.
+- *Exercise a new interactive control, in the browser, before calling it
+  done* — the dropdown had no test that opened it, and that is exactly where
+  the loop lived.
+- *Check how a test fails, not just that it does* — a crash is not an
+  assertion firing.
+- *When a frontend fix appears not to take, suspect the build first* — a
+  stale WASM bundle is indistinguishable from a fix that didn't work.
+- *After adding or renaming a struct field, grep for hand-authored JSON
+  fixtures of that struct* — serde breaks at runtime, not compile time.
+
+The reactive-loop hazard itself is documented separately in
+[frontend.md](../../frontend.md#never-write-a-signal-a-use_effect-also-reads),
+along with the two traps in writing a test that can catch it.
