@@ -652,11 +652,12 @@ async fn enabling_firmware_updates_on_a_device_persists() -> R {
 /// is the only way to catch a reactive-loop regression from the outside: the
 /// symptom is unbounded *repetition* of a request that is individually correct.
 ///
-/// Count broadly. An earlier version of this helper watched only
-/// `/dashboard/preview` and passed against a live loop, because the switch
-/// effect fires three sequential fetches and superseded iterations bail out
-/// after the first — so the flood lands on the *earliest* call in the chain,
-/// not the one the feature is "about".
+/// Count broadly. An earlier version watched only `/dashboard/preview` and
+/// would have undercounted a slower loop: the switch effect fires three
+/// sequential fetches and superseded iterations bail out after the first, so
+/// the flood lands on the *earliest* call in the chain, not the one the
+/// feature is "about". (That version did still fail on the real bug — but
+/// via a browser-tab crash, i.e. incidentally, not by its own assertion.)
 async fn resource_request_count(c: &Client, needle: &str) -> Result<u64, Box<dyn std::error::Error>> {
     let script = format!(
         "return window.performance.getEntriesByType('resource') \
@@ -740,12 +741,10 @@ async fn switching_preview_device_does_not_loop_requests() -> R {
             .at_most(WAIT)
             .for_element(Locator::XPath("//select//option[contains(., '2-bit')]"))
             .await?;
-        // Confirm the full page really is rendered — if the key gate were
-        // still closed this test would silently go back to exercising only
-        // the header.
         // Guard the setup itself. Without these the test can silently decay
-        // into exercising only the page header — which is exactly how the
-        // first version of this test passed against a live loop.
+        // into exercising only the page header — the first version ran with
+        // the key gate closed, so it never rendered the chat column or
+        // preview panel the loop actually lives alongside.
         let gated = c
             .execute(
                 "return document.body.innerText.indexOf('No Claude API key configured') !== -1;",

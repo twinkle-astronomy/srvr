@@ -86,7 +86,7 @@ accumulated are summarized in the Retrospective).
 
 ## Verification
 
-`cargo test --features server` — 147 unit tests + 12 browser E2E tests, all
+`cargo test --features server` — 147 unit tests + 13 browser E2E tests, all
 passing. `cargo check --no-default-features --features web --target
 wasm32-unknown-unknown` clean. Two tests pin the ends of the feature:
 
@@ -200,16 +200,32 @@ wasm32-unknown-unknown` clean. Two tests pin the ends of the feature:
   retriggered the effect, which spawned another three-request fetch trio.
   The reported symptom was an unresponsive page, a request flood, and
   climbing memory; the regression test reproduces it as a hard browser-tab
-  crash (171s to crash, versus 5s to pass once fixed). `peek()` is the fix.
-  Two things stand out. First, every test tier the project already had was
-  blind to it: the loop is *correct code executed unboundedly*, so nothing
-  that inspects a single request or a single render can see it — catching it
-  needs a request count over time
-  (`performance.getEntriesByType('resource')` in the browser tier). Second,
-  it was introduced by a fix for a race that a *reviewer question* had
-  surfaced — tightening one concurrency bug opened a worse one, in code that
-  the existing E2E test for the same page walked straight past because it
-  never touched the dropdown.
+  crash (239s to crash, versus ~7s to pass once fixed). `peek()` is the fix.
+  Three things stand out.
+
+  First, every test tier the project already had was blind to it: the loop is
+  *correct code executed unboundedly*, so nothing that inspects a single
+  request or a single render can see it — catching it needs a request count
+  over time (`performance.getEntriesByType('resource')` in the browser tier).
+
+  Second, it was introduced by a fix for a race that a *reviewer question*
+  had surfaced — tightening one concurrency bug opened a worse one, in code
+  the existing E2E test for that page walked straight past because it never
+  touched the dropdown.
+
+  Third, and the part worth remembering: when the user reported the loop was
+  *still* happening after the fix, the cause was a stale WASM bundle, not the
+  code. But the assumption jumped to "my test must be a false negative," and
+  a rewrite was justified to the user on that basis — stated as fact, and
+  wrong: the original test had failed on the bug, by crashing the tab. The
+  rewrite was still worth doing, because the original's *assertion* had a
+  real hole (it counted only `/dashboard/preview`, which a slower loop would
+  have undercounted, since superseded iterations bail out after the first of
+  three fetches) — but that is a different, weaker claim than the one made.
+  The lesson is narrow and practical: **when a fix appears not to have taken,
+  rule out the build before re-opening the diagnosis.** A frontend fix that
+  passes a validated test and still misbehaves in the browser is a stale
+  bundle until proven otherwise.
 
 **What to change (proposed, not yet applied)**
 
@@ -236,6 +252,13 @@ confirmation:
   A new interactive control needs a test that operates it — rendering it
   is not exercising it. (Now documented as a hazard in
   [frontend.md](../../frontend.md#never-write-a-signal-a-use_effect-also-reads).)
+- *Check how a test fails, not just that it does.* A test that fails by
+  crashing the browser is not the same as one that fails on its assertion;
+  the first tells you nothing about whether the assertion works.
+- *When a frontend fix appears not to take, suspect the bundle first.*
+  `dx build --platform web`, restart, hard-reload — before re-opening the
+  diagnosis or rewriting tests. A stale WASM bundle is indistinguishable
+  from a fix that didn't work.
 - *After adding a struct field, grep for hand-authored JSON fixtures of
   that struct* (`grep -rln '"sibling_field_name"'`) — this repo has at
   least one, and no compiler check covers it.

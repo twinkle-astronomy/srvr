@@ -68,8 +68,16 @@ writing one:
   panel) must be unlocked in the fixture, or the test exercises a page the
   user never sees. Assert the gate is open rather than assuming it.
 
-Validate such a test by reintroducing the bug and watching it fail — a
-loop test that has never failed is probably measuring the wrong thing.
+Validate such a test by reintroducing the bug and watching it fail — and
+check *how* it fails. The first version of this test did fail, but by
+crashing the browser tab rather than by its own assertion; a less violent
+loop would have slipped past it. Failing for the intended reason is the bar,
+not failing at all.
+
+Finally, when a frontend fix appears not to work, suspect the bundle before
+the code: `dx build --platform web`, restart, then hard-reload the browser.
+WASM caches aggressively, and a stale bundle looks exactly like a fix that
+didn't take.
 
 ## Global store
 
