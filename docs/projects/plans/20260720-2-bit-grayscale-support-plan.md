@@ -30,7 +30,7 @@ To support 2‑bit grayscale we will:
 ```rust
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 
-pub fn convert_to_2bit(img: DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+pub fn convert_to_2bit(img: &DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
     let (w, h) = img.dimensions();
     let mut out = ImageBuffer::new(w, h);
     for (x, y, pixel) in img.pixels() {
@@ -47,7 +47,12 @@ pub fn convert_to_2bit(img: DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
 }
 ```
 - Call this function only when the detected bit depth is `2`.
-- Encode the resulting buffer back to PNG (`image::codecs::png::PngEncoder`). The output will contain exactly four gray levels and therefore be a true 2‑bit image.
+- **Correction (resolved 2026‑08‑23):** `image::codecs::png::PngEncoder` cannot write anything below 8‑bit‑per‑channel for a `Luma<u8>` buffer — it hard-errors on `BitDepth::Two`. Encoding the buffer above through it would produce an 8‑bit PNG that merely *uses* four gray values, not a PNG with an actual 2‑bit color depth. Decided to produce a **true 2‑bit-depth PNG**: add a direct `png = "0.18"` dependency (already pulled in transitively by `image`, so this doesn't add a new major dependency) and hand-roll the encode:
+  - Map each of the four display values (0/85/170/255) to a 2‑bit sample index (0/1/2/3).
+  - Pack 4 samples per byte, MSB-first, one row of `ceil(width / 4)` bytes per scanline (no 4‑byte row padding — that's a BMP quirk, not a PNG one).
+  - Write via `png::Encoder::new(...).set_color(Grayscale).set_depth(BitDepth::Two)`, `write_header()`, `writer.write_image_data(&packed)`, `writer.finish()`.
+  - Verified empirically (scratch spike): a real bit-depth-2 grayscale PNG built this way round-trips through `image::load_from_memory` (which auto-expands sub-8-bit depths via `Transformations::EXPAND`) back to exactly `[0, 85, 170, 255, ...]` — so `convert_to_2bit`'s output values were chosen correctly to align with PNG's own depth-scaling.
+  - `encode_2bit_png` lives in `src/device/grayscale.rs` alongside `convert_to_2bit`; it returns `Result<Vec<u8>, png::EncodingError>`, converted into `renderer::Error` via `#[from]`.
 
 ### 4️⃣ Signing & URL Generation
 - No changes needed to the signing helper itself (`src/hmac.rs`, not `src/api/sign.rs`): `generate_signature_bytes`/`validate_signature` are scoped to `device_id` + timestamp only, independent of which path the URL points at — the same signature works for `/render/screen.bmp` and a new `/render/screen_2bit.png` route.
@@ -64,14 +69,15 @@ Tests are inline `#[cfg(test)] mod tests` blocks in the same file as the code un
 - Test that a full‑white PNG becomes all `255`, and a gradient yields only the four expected levels.
 #### Integration test (inline in `src/device/api.rs`, alongside the existing `display_handler`/`render_screen_handler` tests)
 - Spin up an in‑memory Axum server (`super::router::<()>(false)`, per the existing tests in that file), send `/api/display` for a device whose `supports_2bit_grayscale` flag is true (e.g., insert a test row into the `devices` table with that flag set).
-- Assert the JSON response contains a signed `.png` URL and that fetching it returns a PNG whose `bit-depth` is reported as `2` (use `image::io::Reader`).
+- Assert the JSON response contains a signed `.png` URL and that fetching it returns a PNG.
+- **Correction (resolved 2026‑08‑23):** `image::io::Reader`/`image::load_from_memory` can't report the *raw* on-disk bit depth — the decoder transparently expands sub-8-bit grayscale to 8-bit samples (`Transformations::EXPAND`) before handing back a `DynamicImage`, so there's no bit-depth field left to read at that layer. To assert the real on-wire depth, decode with the lower-level `png::Decoder` directly and check `reader.info().bit_depth == png::BitDepth::Two` (confirmed via spike — this reports `Two` correctly even though `image`'s own decoder reports 8-bit-equivalent pixel data for the same bytes).
 - Repeat with a device whose `supports_2bit_grayscale` flag is **false** to ensure the BMP path remains unchanged.
 #### End‑to‑end verification
 - Use the `/verify` skill after implementation to run a headless browser, load the dashboard, and confirm the image URL changes based on the device’s `supports_2bit_grayscale` flag.
 
 ### 7️⃣ Documentation Updates
 - **docs/templates.md** – Add a note about grayscale palettes (`#000000 #555555 #aaaaaa #ffffff`).
-- **docs/api.md** – Document the new device‑model flag (`supports_2bit_grayscale`) and updated response fields.
+- **docs/architecture.md** – Document the new device‑model flag (`supports_2bit_grayscale`) and the `/api/display` response's new `bitdepth` field. **Correction (resolved 2026‑08‑23):** `docs/api.md` is explicitly scoped to the *dashboard* JSON API under `/dashboard/*` (see its own heading) — the device-facing `/api/display` schema belongs in `docs/architecture.md`, where the device routes are already listed.
 - **docs/projects/ideas/2-bit-grayscale-support.md** – Mark as completed (or move to `completed` folder) once the plan is merged.
 
 ## Milestones & Timeline
