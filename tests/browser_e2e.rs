@@ -629,6 +629,45 @@ async fn enabling_firmware_updates_on_a_device_persists() -> R {
 }
 
 #[tokio::test]
+async fn enabling_2bit_grayscale_on_a_device_persists() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+    seed_device(&server.base, "AA:BB:CC:DD:EE:03").await;
+
+    let devices = get_json(&server.base, &cookie, "/dashboard/devices").await;
+    let device_id = devices[0]["id"].as_i64().unwrap();
+    assert_eq!(
+        devices[0]["supports_2bit_grayscale"],
+        json!(false),
+        "should default off"
+    );
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/devices/{}", server.base, device_id)).await?;
+        wait_for_text(&c, "2-bit Grayscale").await?;
+
+        c.find(Locator::XPath(
+            "//h2[contains(., '2-bit Grayscale')]/following-sibling::div[1]//label",
+        ))
+        .await?
+        .click()
+        .await?;
+        wait_for_text(&c, "Saved!").await?;
+
+        let device = get_json(&server.base, &cookie, &format!("/dashboard/devices/{device_id}")).await;
+        assert_eq!(device["supports_2bit_grayscale"], json!(true));
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
 async fn selecting_a_firmware_binary_prefills_the_embedded_version() -> R {
     let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
     let _guard = test_lock().lock().await;

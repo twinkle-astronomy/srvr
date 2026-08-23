@@ -268,6 +268,17 @@ pub async fn update_device_firmware_updates_enabled(
     .await
 }
 
+pub async fn update_device_supports_2bit_grayscale(
+    device_id: i64,
+    enabled: bool,
+) -> Result<(), ServerFnError> {
+    post_void(
+        &format!("/dashboard/devices/{device_id}/grayscale"),
+        &serde_json::json!({"enabled": enabled}),
+    )
+    .await
+}
+
 pub async fn get_render_context(id: i64) -> Result<RenderContext, ServerFnError> {
     get(&format!("/dashboard/devices/{id}/render-context")).await
 }
