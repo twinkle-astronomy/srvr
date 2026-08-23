@@ -193,6 +193,24 @@ wasm32-unknown-unknown` clean. Two tests pin the ends of the feature:
   the plan had been presented for approval with that section stated as fact.
   Caught only because the user asked "did you confirm this?"
 
+- **The fix for that race then shipped an infinite loop.** Bumping
+  `generation` inside the switch `use_effect` was written as
+  `let my = generation() + 1; generation.set(my);` — a *tracked* read
+  subscribing the effect to the signal it immediately writes. Every write
+  retriggered the effect, which spawned another three-request fetch trio.
+  The reported symptom was an unresponsive page, a request flood, and
+  climbing memory; the regression test reproduces it as a hard browser-tab
+  crash (171s to crash, versus 5s to pass once fixed). `peek()` is the fix.
+  Two things stand out. First, every test tier the project already had was
+  blind to it: the loop is *correct code executed unboundedly*, so nothing
+  that inspects a single request or a single render can see it — catching it
+  needs a request count over time
+  (`performance.getEntriesByType('resource')` in the browser tier). Second,
+  it was introduced by a fix for a race that a *reviewer question* had
+  surfaced — tightening one concurrency bug opened a worse one, in code that
+  the existing E2E test for the same page walked straight past because it
+  never touched the dropdown.
+
 **What to change (proposed, not yet applied)**
 
 Three candidate rules for
@@ -212,6 +230,12 @@ confirmation:
   plan exists to be checkable before implementation; assertions in one carry
   the weight of verified fact. Read the code, or mark the claim as an
   assumption to confirm.
+- *Exercise the control you just added, in the browser, before calling it
+  done.* The device-page preview got an E2E test; the dropdown that was the
+  actual new interaction did not, and that is exactly where the loop lived.
+  A new interactive control needs a test that operates it — rendering it
+  is not exercising it. (Now documented as a hazard in
+  [frontend.md](../../frontend.md#never-write-a-signal-a-use_effect-also-reads).)
 - *After adding a struct field, grep for hand-authored JSON fixtures of
   that struct* (`grep -rln '"sibling_field_name"'`) — this repo has at
   least one, and no compiler check covers it.

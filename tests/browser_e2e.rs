@@ -647,6 +647,84 @@ async fn enabling_firmware_updates_on_a_device_persists() -> R {
     result
 }
 
+/// Counts requests the page has made to `needle`, via the browser's own
+/// Resource Timing buffer. Used to assert a bounded number of fetches, which
+/// is the only way to catch a reactive-loop regression from the outside: the
+/// symptom is unbounded *repetition* of a request that is individually correct.
+async fn resource_request_count(c: &Client, needle: &str) -> Result<u64, Box<dyn std::error::Error>> {
+    let script = format!(
+        "return window.performance.getEntriesByType('resource') \
+         .filter(function (e) {{ return e.name.indexOf('{needle}') !== -1; }}).length;"
+    );
+    let v = c.execute(&script, vec![]).await?;
+    Ok(v.as_u64().unwrap_or(0))
+}
+
+#[tokio::test]
+async fn switching_preview_device_does_not_loop_requests() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+    seed_device(&server.base, "AA:BB:CC:DD:EE:05").await;
+    let template_id = seed_template(
+        &server.base,
+        &cookie,
+        "loop-regression",
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480"></svg>"#,
+    )
+    .await;
+
+    // Give the one device 2-bit mode, so picking it is a genuine mode change.
+    let devices = get_json(&server.base, &cookie, "/dashboard/devices").await;
+    let device_id = devices[0]["id"].as_i64().unwrap();
+    http()
+        .post(format!("{}/dashboard/devices/{device_id}/grayscale", server.base))
+        .header("cookie", &cookie)
+        .json(&json!({ "enabled": true }))
+        .send()
+        .await
+        .unwrap();
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/template/{}/generate", server.base, template_id))
+            .await?;
+        // The selector renders above the API-key gate, so no Claude key needed.
+        c.wait()
+            .at_most(WAIT)
+            .for_element(Locator::XPath(&format!(
+                "//select//option[contains(., '{}')]",
+                devices[0]["friendly_id"].as_str().unwrap()
+            )))
+            .await?;
+
+        let before = resource_request_count(&c, "/dashboard/preview").await?;
+
+        // Switch from the default (Virtual, index 0) to the real 2-bit device.
+        c.find(Locator::Css("select")).await?.select_by_value("1").await?;
+
+        // Let any loop run: a device switch should cost exactly one preview
+        // fetch, so even a slow-but-bounded implementation lands in single
+        // digits. The buggy version fires continuously — the effect subscribed
+        // to the same `generation` signal it wrote, retriggering itself.
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let after = resource_request_count(&c, "/dashboard/preview").await?;
+
+        let fired = after.saturating_sub(before);
+        assert!(
+            fired <= 5,
+            "switching preview device should trigger ~1 preview fetch, got {fired} in 3s \
+             — a reactive loop is re-running the switch effect"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
 #[tokio::test]
 async fn device_page_preview_renders_in_the_devices_configured_mode() -> R {
     let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");

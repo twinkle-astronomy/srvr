@@ -733,7 +733,13 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
         // wire completes after us and overwrites `preview_image` at the
         // `render_template` handler with an image rendered for the device
         // that *was* selected when Send was pressed.
-        let my_generation = generation() + 1;
+        //
+        // `peek()`, not `generation()`: a tracked read here would subscribe
+        // this effect to the very signal it then writes, so the write would
+        // retrigger the effect, which would write again — an unbounded loop
+        // that spawns a fetch trio per pass and crashes the tab. The only
+        // dependency this effect should have is `selected_device`.
+        let my_generation = *generation.peek() + 1;
         generation.set(my_generation);
 
         spawn(async move {
