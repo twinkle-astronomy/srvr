@@ -79,6 +79,16 @@ async fn update_device_firmware_updates(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn update_device_grayscale(
+    auth: AuthSession,
+    Path(device_id): Path<i64>,
+    Json(body): Json<UpdateCompatBody>,
+) -> Result<StatusCode, ApiError> {
+    require_auth(&auth)?;
+    crate::db::update_device_supports_2bit_grayscale(device_id, body.enabled).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn get_render_context(
     auth: AuthSession,
     Path(id): Path<i64>,
@@ -139,6 +149,7 @@ pub fn router() -> axum::Router {
             "/devices/{id}/firmware-updates",
             post(update_device_firmware_updates),
         )
+        .route("/devices/{id}/grayscale", post(update_device_grayscale))
         .route("/devices/{id}/render-context", get(get_render_context))
         .route(
             "/devices/{id}/render-context/{template_id}",
@@ -221,6 +232,42 @@ mod tests {
 
         let updated = crate::db::get_device(device.id).await.expect("get device");
         assert!(updated.firmware_updates_enabled);
+    }
+
+    #[tokio::test]
+    async fn grayscale_toggle_round_trip() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let device = crate::db::create_device(
+            &format!("grayscale-toggle-api-token-{suffix}"),
+            Some(&format!("aa:bb:cc:dd:99:{suffix}")),
+            Some("trmnl-og"),
+            &format!("grayscale-toggle-api-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+        assert!(!device.supports_2bit_grayscale);
+
+        let response = router
+            .oneshot(
+                Request::post(format!("/devices/{}/grayscale", device.id))
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"enabled": true}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        let updated = crate::db::get_device(device.id).await.expect("get device");
+        assert!(updated.supports_2bit_grayscale);
     }
 
     #[tokio::test]

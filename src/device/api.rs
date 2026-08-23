@@ -51,6 +51,17 @@ fn decide_firmware_update<'a>(
     Some(release)
 }
 
+/// Which render route + file extension a device's poll response should point
+/// at. Devices with `supports_2bit_grayscale` get the true 2-bit PNG route;
+/// everyone else keeps the original 1-bit BMP route.
+fn render_route_for_device(supports_2bit_grayscale: bool) -> (&'static str, &'static str) {
+    if supports_2bit_grayscale {
+        ("/render/screen_2bit.png", "png")
+    } else {
+        ("/render/screen.bmp", "bmp")
+    }
+}
+
 #[derive(Clone, Debug)]
 struct LogBroadcastMessage {
     device_id: i64,
@@ -113,6 +124,7 @@ pub fn router<T: Clone + Send + Sync + 'static>(tls_enabled: bool) -> Router<T> 
         .route("/api/setup", get(setup_handler))
         .route("/api/setup/", get(setup_handler))
         .route("/render/screen.bmp", get(render_screen_handler))
+        .route("/render/screen_2bit.png", get(render_screen_2bit_handler))
         .route("/firmware/download", get(firmware_download_handler))
         .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, Duration::from_secs(30)))
         .layer(middleware::from_fn(connection_close));
@@ -134,6 +146,7 @@ struct DisplayResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     firmware_url: Option<String>,
     maximum_compatibility: bool,
+    bitdepth: u8,
 }
 
 #[derive(Deserialize)]
@@ -235,9 +248,10 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     let signed_bytes = generate_signature_bytes(secret, device.id, real_clock.clone());
     let sig_encoded = URL_SAFE_NO_PAD.encode(&signed_bytes);
 
+    let (render_path, render_ext) = render_route_for_device(device.supports_2bit_grayscale);
     let image_url = format!(
-        "{}://{}/render/screen.bmp?device_id={}&t={}&sig={}",
-        scheme, host, device.id, timestamp, sig_encoded
+        "{}://{}{}?device_id={}&t={}&sig={}",
+        scheme, host, render_path, device.id, timestamp, sig_encoded
     );
 
     // Opted-out devices (the default) skip the release lookup entirely —
@@ -267,11 +281,12 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
 
     let response = DisplayResponse {
         image_url: Some(image_url),
-        filename: Some(format!("screen_{}.bmp", timestamp)),
+        filename: Some(format!("screen_{}.{}", timestamp, render_ext)),
         refresh_rate: (60 - Local::now().second()) as u32,
         update_firmware: firmware_release.is_some(),
         firmware_url,
         maximum_compatibility: device.maximum_compatibility,
+        bitdepth: if device.supports_2bit_grayscale { 2 } else { 1 },
     };
     info!("Response: {:?}", response);
     (StatusCode::OK, Json(response)).into_response()
@@ -472,6 +487,29 @@ async fn render_screen_handler(Query(params): Query<RenderQuery>) -> impl IntoRe
     }
 }
 
+// GET /render/screen_2bit.png - Render 2-bit grayscale screen image with HMAC validation
+async fn render_screen_2bit_handler(Query(params): Query<RenderQuery>) -> impl IntoResponse {
+    if let Err(response) = check_signed_request(&params) {
+        return response;
+    }
+
+    let render_context = match render_context_for_device(params.device_id).await {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Error: {:?}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response();
+        }
+    };
+
+    match renderer::render_screen_2bit_png(&render_context).await {
+        Ok(image) => (StatusCode::OK, [("Content-Type", "image/png")], image).into_response(),
+        Err(e) => {
+            error!("Error: {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{:?}", e)).into_response()
+        }
+    }
+}
+
 // GET /firmware/download - Download the active firmware binary for the
 // requesting device's model. Shares the signed-URL gate with
 // /render/screen.bmp (same device+timestamp scoped signature).
@@ -613,6 +651,19 @@ mod tests {
         let release = sample_release("1.0.0");
         let decision = decide_firmware_update(true, Some("1.0.0"), Some(&release));
         assert_eq!(decision, None, "device already has the active version");
+    }
+
+    #[test]
+    fn render_route_for_device_without_grayscale_support_uses_bmp() {
+        assert_eq!(render_route_for_device(false), ("/render/screen.bmp", "bmp"));
+    }
+
+    #[test]
+    fn render_route_for_device_with_grayscale_support_uses_2bit_png() {
+        assert_eq!(
+            render_route_for_device(true),
+            ("/render/screen_2bit.png", "png")
+        );
     }
 
     #[test]
@@ -782,6 +833,188 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["update_firmware"], serde_json::json!(false));
         assert!(json.get("firmware_url").is_none() || json["firmware_url"].is_null());
+    }
+
+    #[tokio::test]
+    async fn display_handler_points_grayscale_devices_at_the_2bit_png_route() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:88:{suffix}");
+        let device = crate::db::create_device(
+            &format!("grayscale-poll-token-{suffix}"),
+            Some(&mac),
+            Some("trmnl-og"),
+            &format!("grayscale-poll-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+        crate::db::update_device_supports_2bit_grayscale(device.id, true)
+            .await
+            .expect("enable 2-bit grayscale");
+
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/display")
+                    .header("Access-Token", &device.access_token)
+                    .header("ID", &mac)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let image_url = json["image_url"].as_str().expect("image_url present");
+        assert!(
+            image_url.contains("/render/screen_2bit.png"),
+            "grayscale-enabled device should get a 2-bit PNG url, got: {image_url}"
+        );
+        assert_eq!(json["bitdepth"], serde_json::json!(2));
+        assert!(
+            json["filename"].as_str().unwrap().ends_with(".png"),
+            "expected a .png filename, got: {json:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn display_handler_keeps_legacy_devices_on_the_bmp_route() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:77:{suffix}");
+        let device = crate::db::create_device(
+            &format!("legacy-poll-token-{suffix}"),
+            Some(&mac),
+            Some("trmnl-og"),
+            &format!("legacy-poll-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+        // supports_2bit_grayscale defaults to false — left untouched.
+
+        let router = super::router::<()>(false);
+        let response = router
+            .oneshot(
+                Request::get("/api/display")
+                    .header("Access-Token", &device.access_token)
+                    .header("ID", &mac)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let image_url = json["image_url"].as_str().expect("image_url present");
+        assert!(
+            image_url.contains("/render/screen.bmp"),
+            "legacy device should keep the BMP url, got: {image_url}"
+        );
+        assert_eq!(json["bitdepth"], serde_json::json!(1));
+    }
+
+    #[tokio::test]
+    async fn grayscale_device_end_to_end_poll_and_fetch_yields_a_real_2bit_png() {
+        crate::hmac::init_signing_secret("device-api-test-secret".to_string());
+        crate::db::test_support::init_test_db().await;
+
+        let suffix = format!("{}_{}", std::process::id(), line!());
+        let mac = format!("aa:bb:cc:dd:66:{suffix}");
+        let device = crate::db::create_device(
+            &format!("grayscale-e2e-token-{suffix}"),
+            Some(&mac),
+            Some("trmnl-og"),
+            &format!("grayscale-e2e-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+        crate::db::update_device_supports_2bit_grayscale(device.id, true)
+            .await
+            .expect("enable 2-bit grayscale");
+
+        // create_device() points new devices at the lazily-created "default"
+        // template (lowest id in the whole shared test-DB binary) — a row
+        // every parallel test shares. No other test currently renders through
+        // it for real, so assign this device a dedicated template instead of
+        // relying on that shared, mutable row staying valid for the length of
+        // this test.
+        let template = crate::db::create_template(
+            &format!("grayscale-e2e-template-{suffix}"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="black"/></svg>"#,
+        )
+        .await
+        .expect("create dedicated template fixture");
+        crate::db::update_device_template(device.id, template.id)
+            .await
+            .expect("assign dedicated template");
+
+        let router = super::router::<()>(false);
+        let poll_response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/display")
+                    .header("Access-Token", &device.access_token)
+                    .header("ID", &mac)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(poll_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let image_url = json["image_url"].as_str().expect("image_url present").to_string();
+        let path_and_query = image_url
+            .split_once("/render/")
+            .map(|(_, rest)| format!("/render/{rest}"))
+            .expect("image_url points at /render/...");
+
+        let render_response = router
+            .oneshot(Request::get(path_and_query).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = render_response.status();
+        let png_bytes = axum::body::to_bytes(render_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body: {}",
+            String::from_utf8_lossy(&png_bytes)
+        );
+
+        // image's own decoder transparently expands sub-8-bit depths
+        // (Transformations::EXPAND), so the raw bit depth has to be read via
+        // the lower-level png crate directly.
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png_bytes[..]));
+        let reader = decoder.read_info().expect("read png info");
+        assert_eq!(reader.info().bit_depth, png::BitDepth::Two);
+        assert_eq!(reader.info().color_type, png::ColorType::Grayscale);
     }
 
     #[tokio::test]

@@ -2,6 +2,16 @@
 
 Templates are SVG files rendered with the Liquid templating language. The rendering pipeline is: Liquid → SVG → usvg → resvg → 1-bit BMP.
 
+Devices with the `supports_2bit_grayscale` flag set instead get: Liquid → SVG →
+usvg → resvg → 2-bit grayscale PNG (`/render/screen_2bit.png` — see
+[architecture.md](architecture.md#device-poll-response-get-apidisplay)). The
+same template renders on both paths; only the final rasterization step
+differs — the 2-bit path keeps intermediate grays instead of thresholding to
+pure black/white, then quantizes to one of four levels:
+`#000000 #555555 #aaaaaa #ffffff`. Fills using only these four colors (or any
+gray that already falls near one of them) round-trip predictably; anything
+in between gets snapped to the nearest of the four.
+
 ## Available Variables
 
 ```

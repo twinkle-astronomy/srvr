@@ -24,6 +24,8 @@ pub enum Error {
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
     ImageError(#[from] image::ImageError),
+    #[error("{0}")]
+    PngEncodingError(#[from] png::EncodingError),
 }
 
 pub async fn render_vars(render_context: &RenderContext) -> Result<Object, Error> {
@@ -132,6 +134,57 @@ fn svg_to_bilevel(svg_data: &str) -> Result<(usize, usize, Vec<bool>), Error> {
     }
 
     Ok((width, height, is_white))
+}
+
+/// Renders a 2-bit (four-level) grayscale PNG for e-ink displays that
+/// support it — unlike `render_screen`/`render_screen_png`, this preserves
+/// intermediate gray values through rasterization instead of thresholding
+/// straight to black/white.
+pub async fn render_screen_2bit_png(render_context: &RenderContext) -> Result<Vec<u8>, Error> {
+    let svg_data = render_context
+        .template
+        .render(render_vars(render_context).await?)?;
+
+    svg_to_2bit_png(&svg_data)
+}
+
+/// Parses and rasterizes SVG to a full 0-255 grayscale pixel grid (no
+/// thresholding) — the 2-bit counterpart of `svg_to_bilevel` above. Returns
+/// (width, height, gray) with `gray` in row-major order.
+fn svg_to_grayscale(svg_data: &str) -> Result<(usize, usize, Vec<u8>), Error> {
+    let mut opt = usvg::Options::default();
+    opt.fontdb_mut().load_system_fonts();
+
+    let tree = usvg::Tree::from_str(svg_data, &opt)?;
+
+    let pixmap_size = tree.size().to_int_size();
+    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
+        .expect("Invalid image size");
+
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+
+    let width = pixmap.width() as usize;
+    let height = pixmap.height() as usize;
+    let mut gray = vec![0u8; width * height];
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = pixmap.pixel(x as u32, y as u32).unwrap();
+            gray[y * width + x] = (0.299 * pixel.red() as f32
+                + 0.587 * pixel.green() as f32
+                + 0.114 * pixel.blue() as f32) as u8;
+        }
+    }
+
+    Ok((width, height, gray))
+}
+
+fn svg_to_2bit_png(svg_data: &str) -> Result<Vec<u8>, Error> {
+    let (width, height, gray) = svg_to_grayscale(svg_data)?;
+    let img = image::GrayImage::from_raw(width as u32, height as u32, gray)
+        .expect("gray length matches width * height");
+    let quantized = crate::device::grayscale::convert_to_2bit(&image::DynamicImage::ImageLuma8(img));
+    Ok(crate::device::grayscale::encode_2bit_png(&quantized)?)
 }
 
 fn svg_to_bmp(svg_data: &str) -> Result<Vec<u8>, Error> {
@@ -254,6 +307,57 @@ mod tests {
         let decoded = image::load_from_memory(&png_bytes).expect("decode png");
         let pixel = decoded.to_luma8().get_pixel(5, 5).0[0];
         assert_eq!(pixel, 255, "white-filled SVG should render as white pixels");
+    }
+
+    #[test]
+    fn test_svg_to_2bit_png_encodes_black_fill_as_level_0() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="black"/></svg>"#;
+        let png_bytes = svg_to_2bit_png(svg).expect("encode 2-bit png");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(decoded.to_luma8().get_pixel(5, 5).0[0], 0);
+    }
+
+    #[test]
+    fn test_svg_to_2bit_png_encodes_white_fill_as_level_255() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="white"/></svg>"#;
+        let png_bytes = svg_to_2bit_png(svg).expect("encode 2-bit png");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(decoded.to_luma8().get_pixel(5, 5).0[0], 255);
+    }
+
+    #[test]
+    fn test_svg_to_2bit_png_preserves_midtone_gray_instead_of_thresholding() {
+        // Pure gray fill (r=g=b=100): luminance formula sums to exactly 100,
+        // landing in the 64..=127 bucket -> level 85. The existing 1-bit path
+        // (svg_to_bmp/svg_to_png) would threshold this same fill to black,
+        // since 100 < 127 -- this test is what actually distinguishes the
+        // 2-bit pipeline from the 1-bit one.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="rgb(100,100,100)"/></svg>"#;
+        let png_bytes = svg_to_2bit_png(svg).expect("encode 2-bit png");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(
+            decoded.to_luma8().get_pixel(5, 5).0[0],
+            85,
+            "a mid-gray fill must be quantized to one of the 4 gray levels, not thresholded to black/white"
+        );
+    }
+
+    #[test]
+    fn test_svg_to_2bit_png_matches_svg_to_bmp_dimensions() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="8"><rect width="20" height="8" fill="black"/></svg>"#;
+        let png_bytes = svg_to_2bit_png(svg).expect("encode 2-bit png");
+        let bmp_bytes = svg_to_bmp(svg).expect("encode bmp");
+
+        let decoded = image::load_from_memory(&png_bytes).expect("decode png");
+        assert_eq!(decoded.width(), 20);
+        assert_eq!(decoded.height(), 8);
+        let bmp_width = i32::from_le_bytes(bmp_bytes[18..22].try_into().unwrap());
+        let bmp_height = i32::from_le_bytes(bmp_bytes[22..26].try_into().unwrap());
+        assert_eq!(bmp_width, 20);
+        assert_eq!(bmp_height, 8);
     }
 
     #[test]

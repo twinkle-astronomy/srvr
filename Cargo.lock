@@ -5332,6 +5332,7 @@ dependencies = [
  "liquid",
  "liquid-core",
  "names",
+ "png 0.18.1",
  "prometheus-http-query",
  "qrcode",
  "reqwest",

@@ -1,0 +1,1 @@
+ALTER TABLE devices ADD COLUMN supports_2bit_grayscale INTEGER NOT NULL DEFAULT 0;

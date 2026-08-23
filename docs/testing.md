@@ -71,6 +71,20 @@ table"). Because the DB is shared across the binary, scope rows you create (e.g.
 with a process-unique suffix) so parallel tests don't collide, and don't assert on
 global counts.
 
+**Watch out for `create_device`'s default template.** `get_default_template()`
+returns whichever template row has the lowest `id` in the *entire* shared-cache
+DB, lazily inserting one the first time any test calls it — it is not scoped
+per test. Every `create_device()` fixture points at that one shared row unless
+you reassign it. Asserting on JSON shape is fine either way, but if your test
+renders and decodes *real* pixel output (fetching `/render/screen.bmp` or
+`/render/screen_2bit.png` and decoding the image), create your own template
+and call `update_device_template(device.id, template.id)` before rendering —
+otherwise a concurrent test that creates/edits/deletes templates can leave
+that shared row in a state your test never expected (e.g. a
+`UsvgError(ParsingFailed(NoRootNode))` from empty content), and the failure
+will only show up intermittently under full parallel `cargo test` runs, not
+when run alone.
+
 ## Browser end-to-end tests
 
 [tests/browser_e2e.rs](../tests/browser_e2e.rs) drives the **real WASM dashboard
