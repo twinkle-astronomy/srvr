@@ -347,12 +347,6 @@ pub async fn get_template_preview(render_context: RenderContext) -> Result<Strin
     post("/dashboard/preview", &render_context).await
 }
 
-pub async fn get_template_preview_png(
-    render_context: RenderContext,
-) -> Result<String, ServerFnError> {
-    post("/dashboard/preview/png", &render_context).await
-}
-
 pub async fn get_template_context(
     render_context: RenderContext,
 ) -> Result<Vec<TemplateVar>, ServerFnError> {

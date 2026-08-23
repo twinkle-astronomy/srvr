@@ -10,9 +10,11 @@ src/
 │                            #   form-style auth routes at /auth/*
 ├── api/                     # Dashboard JSON API under /dashboard/ (server-only)
 │   ├── mod.rs               # Router assembly; ApiError (IntoResponse + From<sqlx::Error>);
-│   │                        #   require_auth() — auth is per-handler, not middleware
+│   │                        #   require_auth() — auth is per-handler, not middleware;
+│   │                        #   render_preview_png() — dashboard previews, always PNG,
+│   │                        #   2-bit or 1-bit per the context device's flag
 │   ├── auth.rs              # check_auth, needs-setup, server-info, JSON auth endpoints
-│   ├── devices.rs           # device CRUD, logs, render contexts
+│   ├── devices.rs           # device CRUD, logs, render contexts, screen previews
 │   ├── templates.rs         # template CRUD, previews, template context/vars
 │   ├── users.rs             # list/delete users
 │   ├── prometheus.rs        # instant-query config + execution
@@ -49,7 +51,7 @@ src/
     │                        #   server build: direct-to-db impls so the native
     │                        #   component-test tier compiles and renders
     ├── store.rs             # AppStore: Dioxus Signals for devices/templates/users/auth
-    ├── components/          # Nav and shared UI components
+    ├── components/          # Nav, PreviewDeviceSelector, shared UI components
     └── pages/               # login, setup, dashboard, devices, templates,
                              #   template_editor/, users
 tests/

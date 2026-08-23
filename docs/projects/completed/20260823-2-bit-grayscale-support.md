@@ -49,20 +49,55 @@ accumulated are summarized in the Retrospective).
   both mirroring the `FirmwareUpdatesToggle` pattern through all four
   layers (fetch helper, native-tier stub, `AppStore` method, component).
   Added in a follow-up pass — see the last retrospective item.
+- **Grayscale-aware previews**: every dashboard preview renders in the mode
+  its device is configured for, so what an admin sees matches what the device
+  will display. One shared `render_preview_png` helper
+  ([src/api/mod.rs](../../../src/api/mod.rs)) branches on
+  `ctx.device.supports_2bit_grayscale`; the device detail page follows that
+  device's flag, and both template-editing pages follow the selected
+  **Preview Device**. Previews are now **always PNG** (see Decisions below),
+  which also let `/dashboard/preview/png` be deleted — the AI generator had
+  been rasterizing every render twice, once for the `<img>` and once for
+  Claude's vision input. A shared `PreviewDeviceSelector`
+  ([src/frontend/components/preview_device_selector.rs](../../../src/frontend/components/preview_device_selector.rs))
+  serves both editors, labels each option with its mode
+  (`kitchen (800×480, 2-bit)`), and always offers the virtual device.
+  `build_system_prompt` also branches: on a 2-bit device Claude is told it has
+  four levels rather than instructed to avoid grayscale.
 - **Docs**: [architecture.md](../../architecture.md) (module map +
   `/api/display` response schema), [templates.md](../../templates.md)
   (grayscale palette note), [testing.md](../../testing.md#database-tests)
   (the shared-default-template trap, below), [state.md](../state.md).
 
+## Decisions
+
+- **Previews are always PNG, never BMP.** The response is a bare base64
+  string, so once it could be either format the client had no way to know
+  what it got short of re-deriving the server's branch. `render_screen_png`
+  is pixel-identical to the BMP, so 1-bit previews are unchanged. Devices
+  still receive a real BMP from `/render/screen.bmp` — only previews moved.
+- **`/dashboard/preview/png` deleted rather than aliased.** It existed only
+  because Claude's vision can't read BMP; once `/preview` always returns PNG
+  the two were byte-identical. Folding them means one render serves both the
+  on-screen preview and Claude's vision input, so the two cannot drift.
+- **The virtual device is always in the selector.** Previously the manual
+  editor offered it only if you owned no real devices, which meant anyone
+  with hardware couldn't preview at a neutral 800×480.
+
 ## Verification
 
-`cargo test --features server` — 139 unit tests + 11 browser E2E tests, all
-passing, including the browser tier driving the new toggle through real
-headless Chromium. `cargo check --no-default-features --features web
---target wasm32-unknown-unknown` clean. The end-to-end path is pinned by
-`grayscale_device_end_to_end_poll_and_fetch_yields_a_real_2bit_png`, which
-polls `/api/display`, follows the returned signed URL, and asserts
-`bit_depth == Two` on the actual response bytes.
+`cargo test --features server` — 147 unit tests + 12 browser E2E tests, all
+passing. `cargo check --no-default-features --features web --target
+wasm32-unknown-unknown` clean. Two tests pin the ends of the feature:
+
+- `grayscale_device_end_to_end_poll_and_fetch_yields_a_real_2bit_png` polls
+  `/api/display`, follows the returned signed URL, and asserts
+  `bit_depth == Two` on the actual response bytes.
+- `device_page_preview_renders_in_the_devices_configured_mode` drives real
+  headless Chromium: it reads the preview's `src`, toggles grayscale on,
+  reloads, and asserts the preview is still a PNG data URL *and* that its
+  bytes changed — catching both a server that reverted to BMP and a preview
+  that ignored the flag.
 
 ## Limitations
 
@@ -75,12 +110,6 @@ polls `/api/display`, follows the returned signed URL, and asserts
   of failure as the `It is not a BMP file` symptom that motivated the
   X-Forwarded-Proto fix. Auto-detection by model or firmware version is the
   obvious follow-up.
-- **The dashboard preview is still 1-bit.** `get_screen_preview` calls
-  `render_screen` (BMP) unconditionally and the page renders it as
-  `data:image/bmp;base64`, so enabling the toggle does not change what the
-  admin sees in the preview pane — only what the device fetches. An admin
-  has no in-UI way to check their template actually looks right in four
-  levels.
 - **No dithering.** `convert_to_2bit` hard-buckets each pixel
   independently. Fine for the flat fills and text that templates mostly
   contain; photographic or gradient content will band visibly. Error
@@ -143,6 +172,27 @@ polls `/api/display`, follows the returned signed URL, and asserts
   near-verbatim from the sibling toggle — far less than the round trip it
   caused.
 
+- **Then shipped the setting with no way to *see* it.** The same mistake
+  one layer up, and it took a written Limitations section to catch. Previews
+  stayed 1-bit, so an admin could enable grayscale and get no feedback that
+  anything had changed. Writing the limitation down is what turned it from
+  an unknown gap into a scheduled fix — but it should have been caught by
+  asking "what does the user see after they flip this?" during the first
+  pass, which is the same question that would have caught the missing
+  toggle.
+
+- **A plan asserted behavior from assumption and was wrong.** The preview
+  plan's AI-page section claimed the render device was "read at render time"
+  and that switching devices mid-conversation would be picked up. Checking
+  found the device is snapshotted once per `send_message` (`mod.rs:518`) and
+  moved into the tool-call closure — so an in-flight turn keeps rendering for
+  the previously selected device. Worse, the claim was hiding a race: the
+  switch handler sets `preview_image`, then the in-flight render overwrites
+  it, because a device switch didn't bump the `generation` counter the
+  supersede guard reads. Both are fixed (the switch bumps `generation`), but
+  the plan had been presented for approval with that section stated as fact.
+  Caught only because the user asked "did you confirm this?"
+
 **What to change (proposed, not yet applied)**
 
 Three candidate rules for
@@ -153,9 +203,15 @@ confirmation:
   describe the same artifact.* When a code sample and its test step
   disagree, that's a design decision surfacing late, not a detail to smooth
   over — stop and settle it before implementing either.
-- *A new setting isn't done until it's reachable.* When a plan is silent on
-  how a flag gets set, treat "settable from the UI it lives next to" as
-  default scope, not an opt-in extra.
+- *A new setting isn't done until it's reachable **and observable**.* When a
+  plan is silent on how a flag gets set, treat "settable from the UI it lives
+  next to" as default scope — and ask what the user sees after flipping it.
+  This project shipped the same omission twice: no toggle, then no visible
+  effect from the toggle.
+- *Don't state behavior of existing code in a plan without reading it.* A
+  plan exists to be checkable before implementation; assertions in one carry
+  the weight of verified fact. Read the code, or mark the claim as an
+  assumption to confirm.
 - *After adding a struct field, grep for hand-authored JSON fixtures of
   that struct* (`grep -rln '"sibling_field_name"'`) — this repo has at
   least one, and no compiler check covers it.

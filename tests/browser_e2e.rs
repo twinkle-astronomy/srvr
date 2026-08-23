@@ -333,6 +333,25 @@ async fn wait_for_text(c: &Client, needle: &str) -> R {
     Ok(())
 }
 
+/// Polls until the device page's preview `<img>` has a `src`, then returns it.
+/// The preview is fetched after mount, so the element exists before its src does.
+async fn wait_for_preview_src(c: &Client) -> Result<String, Box<dyn std::error::Error>> {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        if let Ok(img) = c.find(Locator::Css("img[alt='Screen preview']")).await {
+            if let Ok(Some(src)) = img.attr("src").await {
+                if !src.is_empty() {
+                    return Ok(src);
+                }
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            return Err("timed out waiting for the screen preview to load".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -621,6 +640,62 @@ async fn enabling_firmware_updates_on_a_device_persists() -> R {
 
         let device = get_json(&server.base, &cookie, &format!("/dashboard/devices/{device_id}")).await;
         assert_eq!(device["firmware_updates_enabled"], json!(true));
+        Ok(())
+    }
+    .await;
+    let _ = c.close().await;
+    result
+}
+
+#[tokio::test]
+async fn device_page_preview_renders_in_the_devices_configured_mode() -> R {
+    let endpoint = webdriver_endpoint().expect("getting webdriver endpoint");
+    let _guard = test_lock().lock().await;
+    let server = Server::start().await;
+    let cookie = seed_admin(&server.base, "admin", "hunter2").await;
+    seed_device(&server.base, "AA:BB:CC:DD:EE:04").await;
+
+    let devices = get_json(&server.base, &cookie, "/dashboard/devices").await;
+    let device_id = devices[0]["id"].as_i64().unwrap();
+
+    let c = browser(&endpoint).await;
+    let result = async {
+        login(&c, &server.base, "admin", "hunter2").await?;
+        c.goto(&format!("{}/devices/{}", server.base, device_id)).await?;
+        wait_for_text(&c, "Screen Preview").await?;
+
+        // Previews are always PNG now, in both modes — the client hardcodes
+        // the mime, so a server that went back to BMP would render a broken
+        // image here rather than failing any unit test.
+        let src = wait_for_preview_src(&c).await?;
+        assert!(
+            src.starts_with("data:image/png;base64,"),
+            "preview should be served as a PNG data URL, got: {}",
+            &src[..src.len().min(40)]
+        );
+
+        // Flip the device to 2-bit and confirm the preview actually changes —
+        // the pixels differ because the grayscale path stops thresholding.
+        let before = src;
+        c.find(Locator::XPath(
+            "//h2[contains(., '2-bit Grayscale')]/following-sibling::div[1]//label",
+        ))
+        .await?
+        .click()
+        .await?;
+        wait_for_text(&c, "Saved!").await?;
+        c.refresh().await?;
+        wait_for_text(&c, "Screen Preview").await?;
+
+        let after = wait_for_preview_src(&c).await?;
+        assert!(
+            after.starts_with("data:image/png;base64,"),
+            "grayscale preview should still be a PNG data URL"
+        );
+        assert_ne!(
+            before, after,
+            "enabling 2-bit grayscale must change what the preview shows"
+        );
         Ok(())
     }
     .await;

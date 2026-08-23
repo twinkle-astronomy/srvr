@@ -294,7 +294,7 @@ pub fn DeviceDetail(id: i64) -> Element {
                             Some(Ok(b64)) if !b64.is_empty() => rsx! {
                                 img {
                                     class: "w-full rounded border border-gray-100",
-                                    src: "data:image/bmp;base64,{b64}",
+                                    src: "data:image/png;base64,{b64}",
                                     alt: "Screen preview",
                                 }
                             },

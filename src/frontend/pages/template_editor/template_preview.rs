@@ -56,7 +56,7 @@ pub fn TemplatePreview(
                     match image() {
                         Some(b64) => rsx! {
                             img {
-                                src: "data:image/bmp;base64,{b64}",
+                                src: "data:image/png;base64,{b64}",
                                 alt: "Template preview",
                                 class: "max-w-none",
                                 style: "image-rendering: pixelated;",

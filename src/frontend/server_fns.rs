@@ -212,7 +212,6 @@ native_test_stubs! {
     pub async fn copy_template(i64) -> Template;
     pub async fn get_virtual_render_context(i64) -> RenderContext;
     pub async fn get_template_preview(RenderContext) -> String;
-    pub async fn get_template_preview_png(RenderContext) -> String;
     pub async fn get_template_context(RenderContext) -> Vec<TemplateVar>;
     // Prometheus
     pub async fn get_prometheus_queries_for_template(i64) -> Vec<PrometheusQuery>;

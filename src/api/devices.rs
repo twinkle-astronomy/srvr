@@ -7,7 +7,10 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    api::{ApiError, assemble_render_context, render_context_for_device, require_auth},
+    api::{
+        ApiError, assemble_render_context, render_context_for_device, render_preview_png,
+        require_auth,
+    },
     auth::AuthSession,
     models::{Device, DeviceLog, RenderContext},
 };
@@ -111,28 +114,20 @@ async fn get_screen_preview(
     auth: AuthSession,
     Path(id): Path<i64>,
 ) -> Result<Json<String>, ApiError> {
-    use base64::Engine;
     require_auth(&auth)?;
     let ctx = render_context_for_device(id).await?;
-    let bmp = crate::device::renderer::render_screen(&ctx)
-        .await
-        .map_err(|e| ApiError::internal(format!("{e:?}")))?;
-    Ok(Json(base64::engine::general_purpose::STANDARD.encode(&bmp)))
+    Ok(Json(render_preview_png(&ctx).await?))
 }
 
 async fn get_screen_preview_for_template(
     auth: AuthSession,
     Path((device_id, template_id)): Path<(i64, i64)>,
 ) -> Result<Json<String>, ApiError> {
-    use base64::Engine;
     require_auth(&auth)?;
     let device = crate::db::get_device(device_id).await?;
     let template = crate::db::get_template_by_id(template_id).await?;
     let ctx = assemble_render_context(device, template).await?;
-    let bmp = crate::device::renderer::render_screen(&ctx)
-        .await
-        .map_err(|e| ApiError::internal(format!("{e:?}")))?;
-    Ok(Json(base64::engine::general_purpose::STANDARD.encode(&bmp)))
+    Ok(Json(render_preview_png(&ctx).await?))
 }
 
 pub fn router() -> axum::Router {
@@ -268,6 +263,111 @@ mod tests {
 
         let updated = crate::db::get_device(device.id).await.expect("get device");
         assert!(updated.supports_2bit_grayscale);
+    }
+
+    /// Builds a device with its own dedicated template, so preview renders
+    /// don't depend on the shared lowest-id "default" template row that every
+    /// test in the binary sees — see docs/testing.md#database-tests.
+    async fn device_with_own_template(tag: &str, grayscale: bool) -> crate::models::Device {
+        let suffix = format!("{}_{}_{}", std::process::id(), tag, line!());
+        let device = crate::db::create_device(
+            &format!("preview-token-{suffix}"),
+            Some(&format!("aa:bb:cc:ee:{suffix}")),
+            Some("trmnl-og"),
+            &format!("preview-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device fixture");
+
+        let template = crate::db::create_template(
+            &format!("preview-template-{suffix}"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="black"/></svg>"#,
+        )
+        .await
+        .expect("create template fixture");
+        crate::db::update_device_template(device.id, template.id)
+            .await
+            .expect("assign template");
+
+        if grayscale {
+            crate::db::update_device_supports_2bit_grayscale(device.id, true)
+                .await
+                .expect("enable grayscale");
+        }
+        crate::db::get_device(device.id).await.expect("reload device")
+    }
+
+    /// Decodes a base64 preview payload and reports the raw PNG bit depth.
+    /// Read via `png::Decoder` rather than `image`, which transparently
+    /// expands sub-8-bit depths and so can't report the real one.
+    fn preview_bit_depth(b64: &str) -> png::BitDepth {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .expect("preview payload should be valid base64");
+        let reader = png::Decoder::new(std::io::Cursor::new(&bytes[..]))
+            .read_info()
+            .expect("preview payload should be a PNG");
+        reader.info().bit_depth
+    }
+
+    async fn get_preview_b64(
+        router: axum::Router,
+        cookie: &str,
+        path: String,
+    ) -> String {
+        let response = router
+            .oneshot(Request::get(path).header("cookie", cookie).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&body).expect("preview returns a bare base64 string")
+    }
+
+    #[tokio::test]
+    async fn preview_for_a_grayscale_device_is_a_real_2bit_png() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let device = device_with_own_template("gs", true).await;
+
+        let b64 = get_preview_b64(router, &cookie, format!("/devices/{}/preview", device.id)).await;
+        assert_eq!(
+            preview_bit_depth(&b64),
+            png::BitDepth::Two,
+            "a grayscale-enabled device's preview must show what it will actually display"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_for_a_legacy_device_stays_bilevel() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let device = device_with_own_template("legacy", false).await;
+
+        let b64 = get_preview_b64(router, &cookie, format!("/devices/{}/preview", device.id)).await;
+        assert_eq!(
+            preview_bit_depth(&b64),
+            png::BitDepth::Eight,
+            "a 1-bit device's preview is an 8-bit PNG of the bilevel render, not a 2-bit one"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_for_template_follows_the_devices_grayscale_mode() {
+        let (router, cookie) = crate::api::test_support::login_session(super::router()).await;
+        let device = device_with_own_template("gs-tpl", true).await;
+
+        let b64 = get_preview_b64(
+            router,
+            &cookie,
+            format!("/devices/{}/preview/{}", device.id, device.template_id),
+        )
+        .await;
+        assert_eq!(preview_bit_depth(&b64), png::BitDepth::Two);
     }
 
     #[tokio::test]
