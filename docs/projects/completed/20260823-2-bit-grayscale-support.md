@@ -21,6 +21,13 @@ existing BMP path for any other device.
   of thresholding to black/white before quantizing.
 - Docs: `docs/architecture.md` (module map + `/api/display` response schema),
   `docs/templates.md` (grayscale palette note).
+- Device detail page: a "2-bit Grayscale" toggle mirroring the existing
+  Maximum Compatibility / Firmware Updates toggles end to end (fetch helper,
+  server-fn stub, `AppStore` method, component), added in a follow-up pass
+  once it became clear the API-only endpoint wasn't reachable from the UI.
+  Covered by a browser E2E test
+  (`enabling_2bit_grayscale_on_a_device_persists`) mirroring
+  `enabling_firmware_updates_on_a_device_persists`.
 
 The step-by-step plan (including the two corrections described below) lives
 in git history at `docs/projects/plans/20260720-2-bit-grayscale-support-plan.md`,
@@ -85,3 +92,16 @@ fixtures already scope their access-token/mac/friendly-id with a unique
 suffix. **Any new test that renders real pixel output from a `create_device()`
 fixture must do the same** — assign a dedicated template rather than trust
 the shared default row to still hold valid content by the time the test runs.
+
+**What to change (process):** The first pass shipped the backend toggle
+endpoint but not the device-page UI for it, reasoning that the plan didn't
+call for a dashboard control and scope should stay minimal. That was the
+wrong cut — a toggle nothing can reach is not a smaller feature, it's an
+unfinished one, and it cost a full extra round trip (the user had to notice
+the gap and ask) that a first-pass "is this reachable end-to-end?" check
+would have caught for free. When a plan is silent on how a new flag gets
+set, treat "reachable from the UI it lives next to" as the default scope,
+not an opt-in extra — the mechanical-mirror cost of adding the toggle here
+(rsx! block, five thin plumbing lines, one browser E2E test copied
+near-verbatim from the sibling toggle) was tiny next to the cost of leaving
+it out.
