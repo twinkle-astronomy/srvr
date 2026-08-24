@@ -12,10 +12,11 @@ use ai_types::{
 
 use crate::frontend::server_fns::{
     delete_http_source, delete_prometheus_query, delete_range_query, execute_ad_hoc_http_fetch,
-    execute_prometheus_query, execute_range_query, get_template_context, get_template_preview,
-    get_template_preview_png, get_virtual_render_context, has_claude_api_key, save_http_source,
-    save_prometheus_query, save_range_query,
+    execute_prometheus_query, execute_range_query, get_render_context_for_template,
+    get_template_context, get_template_preview, get_virtual_render_context, has_claude_api_key,
+    save_http_source, save_prometheus_query, save_range_query,
 };
+use crate::frontend::components::PreviewDeviceSelector;
 use crate::frontend::server_fns::TemplateVar;
 use crate::frontend::store::AppStore;
 use crate::models::{Device, HttpSource, PrometheusQuery, RangeQuery, RenderContext, Template};
@@ -207,15 +208,34 @@ fn format_now() -> String {
 
 fn build_system_prompt(ctx: &RenderContext, vars: &[TemplateVar]) -> String {
     let mut s = String::new();
-    s.push_str(
-        "You are an expert SVG + Liquid template author for a TRMNL eink display. \
-         Templates are SVG rendered through Liquid, then converted to a 1-bit black/white BMP.\n\n",
-    );
-    s.push_str(&format!(
-        "Canvas size: {}x{} — keep the SVG within these dimensions, and use only black and white \
-         (no grayscale or color; the display is 1-bit).\n\n",
-        ctx.device.width, ctx.device.height
-    ));
+    // The palette description has to track the selected preview device: a
+    // 2-bit device renders four gray levels, and telling Claude otherwise
+    // would leave it producing pure black/white templates that never use the
+    // extra levels the device (and its preview) can show.
+    if ctx.device.supports_2bit_grayscale {
+        s.push_str(
+            "You are an expert SVG + Liquid template author for a TRMNL eink display. \
+             Templates are SVG rendered through Liquid, then converted to a 2-bit \
+             four-level grayscale image.\n\n",
+        );
+        s.push_str(&format!(
+            "Canvas size: {}x{} — keep the SVG within these dimensions. The display renders \
+             exactly four gray levels: #000000, #555555, #aaaaaa, #ffffff. Use them for \
+             emphasis and separation; any other color is snapped to the nearest of the four, \
+             so intermediate shades will band rather than blend. No color.\n\n",
+            ctx.device.width, ctx.device.height
+        ));
+    } else {
+        s.push_str(
+            "You are an expert SVG + Liquid template author for a TRMNL eink display. \
+             Templates are SVG rendered through Liquid, then converted to a 1-bit black/white BMP.\n\n",
+        );
+        s.push_str(&format!(
+            "Canvas size: {}x{} — keep the SVG within these dimensions, and use only black and white \
+             (no grayscale or color; the display is 1-bit).\n\n",
+            ctx.device.width, ctx.device.height
+        ));
+    }
 
     if ctx.template.content.trim().is_empty() {
         s.push_str("This template is currently empty — you're starting from scratch.\n\n");
@@ -395,7 +415,7 @@ async fn execute_tool_call(
                         );
                         return ToolResultContent::Text("Cancelled.".to_string());
                     }
-                    preview_image.set(Some(image));
+                    preview_image.set(Some(image.clone()));
                     proposal.set(Some(TemplateProposal {
                         svg,
                         prometheus_queries,
@@ -404,37 +424,22 @@ async fn execute_tool_call(
                     }));
                     save_state.set(SaveState::UnsavedChanges);
 
-                    // Let Claude actually see what it rendered — the on-screen
-                    // preview above is BMP (for the <img> tag), but Claude's
-                    // vision input only accepts jpeg/png/gif/webp, so fetch
-                    // the same render as PNG for the tool result.
-                    tracing::debug!("execute_tool_call: awaiting get_template_preview_png");
-                    match get_template_preview_png(ctx).await {
-                        Ok(png_base64) => {
-                            tracing::debug!(
-                                "execute_tool_call: get_template_preview_png RETURNED ok, {} bytes b64",
-                                png_base64.len(),
-                            );
-                            ToolResultContent::Blocks(vec![
-                                ToolResultBlock::Text {
-                                    text: "Rendered successfully. Here is what it looks like:"
-                                        .to_string(),
-                                },
-                                ToolResultBlock::Image {
-                                    source: ImageSource::Base64 {
-                                        media_type: "image/png".to_string(),
-                                        data: png_base64,
-                                    },
-                                },
-                            ])
-                        }
-                        Err(e) => {
-                            tracing::warn!("execute_tool_call: get_template_preview_png RETURNED err: {e}");
-                            ToolResultContent::Text(format!(
-                                "Rendered successfully, but couldn't generate an image of it for you to see: {e}"
-                            ))
-                        }
-                    }
+                    // The same bytes go to the <img> above and to Claude's
+                    // vision input — /preview always returns PNG (which
+                    // Claude accepts), rendered in the selected device's
+                    // mode. One render serves both, so what Claude sees can't
+                    // drift from what the user sees.
+                    ToolResultContent::Blocks(vec![
+                        ToolResultBlock::Text {
+                            text: "Rendered successfully. Here is what it looks like:".to_string(),
+                        },
+                        ToolResultBlock::Image {
+                            source: ImageSource::Base64 {
+                                media_type: "image/png".to_string(),
+                                data: image,
+                            },
+                        },
+                    ])
                 }
                 Err(e) => {
                     tracing::warn!("execute_tool_call: get_template_preview RETURNED err: {e}");
@@ -674,10 +679,14 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
     let mut input = use_signal(String::new);
     let mut save_error = use_signal(|| None::<String>);
     let mut save_state = use_signal(|| SaveState::NoChanges);
-    // Bumped on every send and on Stop — lets an in-flight turn's spawned
-    // task recognize it's been superseded and skip writing back stale
-    // results. See the comment in `send_message`.
+    // Bumped on every send, on Stop, and on a preview-device switch — lets an
+    // in-flight turn's spawned task recognize it's been superseded and skip
+    // writing back stale results. See the comment in `send_message`.
     let mut generation = use_signal(|| 0u64);
+    // `None` until the first load picks one. Unlike the manual editor, this
+    // page defaults to the virtual device, preserving how it behaved before
+    // the selector existed.
+    let selected_device = use_store(|| None::<Device>);
 
     // Auto-scroll the conversation log: stick to the bottom as new content
     // arrives, but stop once the user scrolls up to read earlier messages.
@@ -711,6 +720,76 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
         }
     });
 
+    // Preview-device switch. Deliberately NOT folded into the `use_resource`
+    // above: that one seeds the preview from the *saved* template, so making
+    // it depend on the selected device would clobber an unsaved proposal
+    // every time the user changed devices.
+    use_effect(move || {
+        let Some(device) = selected_device() else {
+            return; // nothing picked yet — the initial load already ran
+        };
+
+        // Supersede any in-flight turn. Without this, a render already on the
+        // wire completes after us and overwrites `preview_image` at the
+        // `render_template` handler with an image rendered for the device
+        // that *was* selected when Send was pressed.
+        //
+        // `peek()`, not `generation()`: a tracked read here would subscribe
+        // this effect to the very signal it then writes, so the write would
+        // retrigger the effect, which would write again — an unbounded loop
+        // that spawns a fetch trio per pass and crashes the tab. The only
+        // dependency this effect should have is `selected_device`.
+        let my_generation = *generation.peek() + 1;
+        generation.set(my_generation);
+
+        spawn(async move {
+            let fetched = if device.id == 0 {
+                get_virtual_render_context(id).await
+            } else {
+                get_render_context_for_template(device.id, id).await
+            };
+            let Ok(ctx) = fetched else { return };
+            if generation() != my_generation {
+                return;
+            }
+
+            if let Ok(vars) = get_template_context(ctx.clone()).await {
+                template_vars.set(vars);
+            }
+
+            // Render whatever the user is actually looking at: an unsaved
+            // proposal if Claude has produced one, else the saved template.
+            // Built the same way the render tool builds it, so a switch can't
+            // render the proposal differently than the tool call did.
+            let preview_ctx = match proposal() {
+                Some(prop) => build_inline_render_context(
+                    id,
+                    device.clone(),
+                    prop.svg.clone(),
+                    &prop.prometheus_queries,
+                    &prop.range_queries,
+                    &prop.http_sources,
+                ),
+                None => ctx.clone(),
+            };
+            if let Ok(image) = get_template_preview(preview_ctx).await {
+                if generation() != my_generation {
+                    return;
+                }
+                preview_image.set(Some(image));
+            }
+
+            // `render_context` keeps the *saved* template content (matching
+            // what the render tool leaves behind), and only its device
+            // changes — this is what the next turn's system prompt, the panel
+            // sizing, and Save all read. `save_state` is intentionally
+            // untouched: switching devices is not an edit.
+            if generation() == my_generation {
+                render_context.set(Some(ctx));
+            }
+        });
+    });
+
     let template_name = templates()
         .iter()
         .find(|t| t.id == id)
@@ -730,6 +809,7 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
                 h1 { class: "text-2xl font-bold text-gray-900 tracking-tight", "{template_name}" }
             }
             div { class: "flex items-center gap-3",
+                PreviewDeviceSelector { selected_device }
                 Link {
                     to: super::super::Route::TemplateEditor { id },
                     class: "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors",
@@ -928,7 +1008,7 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
                                 div {
                                     style: "width: {ctx.device.width}px; height: {ctx.device.height}px;",
                                     img {
-                                        src: "data:image/bmp;base64,{b64}",
+                                        src: "data:image/png;base64,{b64}",
                                         alt: "Template preview",
                                         class: "max-w-none",
                                         style: "image-rendering: pixelated;",
@@ -945,5 +1025,54 @@ pub fn AiTemplateGenerator(id: i64) -> Element {
                 }
             },
         }
+    }
+}
+
+#[cfg(all(test, feature = "server"))]
+mod tests {
+    use super::*;
+
+    fn ctx_for(grayscale: bool) -> RenderContext {
+        let mut device = Device::virtual_device();
+        device.supports_2bit_grayscale = grayscale;
+        RenderContext {
+            device,
+            template: Template {
+                id: 1,
+                name: "t".to_string(),
+                content: "<svg/>".to_string(),
+                created_at: Default::default(),
+                updated_at: Default::default(),
+            },
+            prometheus_queries: vec![],
+            range_queries: vec![],
+            http_sources: vec![],
+        }
+    }
+
+    #[test]
+    fn system_prompt_tells_claude_to_stay_black_and_white_for_a_1bit_device() {
+        let prompt = build_system_prompt(&ctx_for(false), &[]);
+        assert!(
+            prompt.contains("1-bit"),
+            "a 1-bit device's prompt should say so, got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("#555555"),
+            "a 1-bit device must not be offered the grayscale palette, got: {prompt}"
+        );
+    }
+
+    #[test]
+    fn system_prompt_offers_the_grayscale_palette_for_a_2bit_device() {
+        let prompt = build_system_prompt(&ctx_for(true), &[]);
+        assert!(
+            prompt.contains("#555555") && prompt.contains("#aaaaaa"),
+            "a grayscale device's prompt must name the four available levels, got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("no grayscale"),
+            "must not still be telling a grayscale-capable device to avoid grayscale, got: {prompt}"
+        );
     }
 }

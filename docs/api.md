@@ -73,6 +73,20 @@ async fn unauthenticated_returns_401() {
 }
 ```
 
+## Screen previews
+
+`GET /dashboard/devices/{id}/preview[/{template_id}]` and
+`POST /dashboard/preview` all return a **base64 PNG** as a bare JSON string,
+rendered in whichever mode the relevant device is configured for — 2-bit
+grayscale when `supports_2bit_grayscale` is set, otherwise an 8-bit PNG of
+the 1-bit render. They share `render_preview_png` in
+[src/api/mod.rs](../src/api/mod.rs); the branch lives there so clients can
+hardcode `data:image/png` rather than re-deriving it.
+
+Previews are always PNG even in 1-bit mode (`render_screen_png` is
+pixel-identical to the BMP). Devices themselves still receive a real 1-bit
+BMP from `/render/screen.bmp` — only the dashboard moved.
+
 ## Binary/file uploads
 
 Most endpoints are JSON in, JSON out. The one exception is firmware

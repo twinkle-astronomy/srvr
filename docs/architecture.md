@@ -10,9 +10,11 @@ src/
 │                            #   form-style auth routes at /auth/*
 ├── api/                     # Dashboard JSON API under /dashboard/ (server-only)
 │   ├── mod.rs               # Router assembly; ApiError (IntoResponse + From<sqlx::Error>);
-│   │                        #   require_auth() — auth is per-handler, not middleware
+│   │                        #   require_auth() — auth is per-handler, not middleware;
+│   │                        #   render_preview_png() — dashboard previews, always PNG,
+│   │                        #   2-bit or 1-bit per the context device's flag
 │   ├── auth.rs              # check_auth, needs-setup, server-info, JSON auth endpoints
-│   ├── devices.rs           # device CRUD, logs, render contexts
+│   ├── devices.rs           # device CRUD, logs, render contexts, screen previews
 │   ├── templates.rs         # template CRUD, previews, template context/vars
 │   ├── users.rs             # list/delete users
 │   ├── prometheus.rs        # instant-query config + execution
@@ -31,9 +33,14 @@ src/
 ├── device/
 │   ├── mod.rs               # Error enum; header extraction helpers
 │   ├── api.rs               # REST: GET /api/display, POST /api/log, GET /api/setup,
-│   │                        #   GET /render/screen.bmp, SSE /api/devices/stream
+│   │                        #   GET /render/screen.bmp, GET /render/screen_2bit.png,
+│   │                        #   SSE /api/devices/stream
 │   ├── renderer.rs          # render_vars() → liquid::Object; render_screen() → Vec<u8> BMP
 │   │                        #   svg_to_bmp(): usvg parse → resvg render → 1-bit BMP encode
+│   │                        #   render_screen_2bit_png(): same pipeline, no threshold —
+│   │                        #   keeps full grayscale until grayscale::convert_to_2bit
+│   ├── grayscale.rs         # convert_to_2bit(): quantize to 4 gray levels (0/85/170/255)
+│   │                        #   encode_2bit_png(): pack as a genuine 2-bit-depth PNG (png crate)
 │   └── liquid_filters.rs    # Custom Liquid filters: qrcode, qrcode_wifi
 └── frontend/
     ├── mod.rs               # Dioxus App; Route enum (with layout guards)
@@ -44,13 +51,40 @@ src/
     │                        #   server build: direct-to-db impls so the native
     │                        #   component-test tier compiles and renders
     ├── store.rs             # AppStore: Dioxus Signals for devices/templates/users/auth
-    ├── components/          # Nav and shared UI components
+    ├── components/          # Nav, PreviewDeviceSelector, shared UI components
     └── pages/               # login, setup, dashboard, devices, templates,
                              #   template_editor/, users
 tests/
 └── browser_e2e.rs           # fantoccini-driven E2E: real WASM app in headless Chromium
                              #   against a spawned srvr (skips unless WEBDRIVER_URL set)
 ```
+
+## Device poll response (`GET /api/display`)
+
+```json
+{
+  "image_url": "http://host/render/screen.bmp?device_id=1&t=...&sig=...",
+  "filename": "screen_1234.bmp",
+  "refresh_rate": 42,
+  "update_firmware": false,
+  "maximum_compatibility": false,
+  "bitdepth": 1
+}
+```
+
+- `bitdepth` is `2` (and `image_url`/`filename` point at `/render/screen_2bit.png`)
+  when the polling device's `supports_2bit_grayscale` flag is set; otherwise `1`
+  and the original `/render/screen.bmp` route, unchanged.
+- `supports_2bit_grayscale` is a per-device `devices` table column (default
+  `false`), toggled the same way as `maximum_compatibility`/
+  `firmware_updates_enabled`: `POST /dashboard/devices/{id}/grayscale` with
+  `{"enabled": bool}`.
+- `/render/screen_2bit.png` shares the same HMAC-signed-URL gate as
+  `/render/screen.bmp` (device_id + timestamp scoped signature, see `hmac.rs`)
+  and produces a **true 2-bit-depth** grayscale PNG — not an 8-bit PNG that
+  merely uses 4 gray values. `image`'s own PNG encoder can't write below 8bpc,
+  so `grayscale::encode_2bit_png` packs samples and writes via the `png` crate
+  directly.
 
 ## Feature Flags
 

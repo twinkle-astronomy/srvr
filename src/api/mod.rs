@@ -96,6 +96,26 @@ pub(crate) async fn render_context_for_device(id: i64) -> Result<RenderContext, 
     assemble_render_context(device, template).await
 }
 
+/// Renders a base64 dashboard preview in whichever mode the context's device
+/// is configured for, so what an admin sees matches what that device will
+/// actually display.
+///
+/// Always PNG, never BMP. The device itself still receives a 1-bit BMP from
+/// `/render/screen.bmp`, but a preview only needs to *look* right, and
+/// `render_screen_png` is pixel-for-pixel identical to that BMP. Keeping one
+/// container means callers can hardcode `data:image/png` instead of having to
+/// re-derive this branch to know what they were handed.
+pub(crate) async fn render_preview_png(ctx: &RenderContext) -> Result<String, ApiError> {
+    use base64::Engine;
+    let bytes = if ctx.device.supports_2bit_grayscale {
+        crate::device::renderer::render_screen_2bit_png(ctx).await
+    } else {
+        crate::device::renderer::render_screen_png(ctx).await
+    }
+    .map_err(|e| ApiError::internal(format!("{e:?}")))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 pub fn router() -> axum::Router {
     axum::Router::new().nest(
         "/dashboard",

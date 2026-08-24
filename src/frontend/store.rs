@@ -134,6 +134,18 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn update_device_supports_2bit_grayscale(
+        mut self,
+        device_id: i64,
+        val: bool,
+    ) -> Result<(), ServerFnError> {
+        server_fns::update_device_supports_2bit_grayscale(device_id, val).await?;
+        if let Some(d) = self.devices.write().iter_mut().find(|d| d.id == device_id) {
+            d.supports_2bit_grayscale = val;
+        }
+        Ok(())
+    }
+
     // --- Firmware releases ---
 
     pub async fn fetch_firmware_releases(mut self) {

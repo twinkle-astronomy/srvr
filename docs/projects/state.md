@@ -37,6 +37,18 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 ### Rendering
 - Liquid template engine with access to device state, time, Prometheus queries (instant and time-range), and HTTP sources
 - SVG → 1-bit BMP pipeline
+- SVG → 2-bit (4-level) grayscale PNG pipeline for devices with the
+  `supports_2bit_grayscale` flag set: `GET /api/display` points them at
+  `GET /render/screen_2bit.png` instead of `/render/screen.bmp`, and the
+  response's `bitdepth` field reflects which. Same signed-URL gate as the BMP
+  route. The PNG is a genuine 2-bit-depth file (packed via the `png` crate
+  directly — `image`'s own encoder can't write below 8bpc), not an 8-bit PNG
+  that merely uses 4 gray values. Per-device toggle: `POST
+  /dashboard/devices/{id}/grayscale`. Every dashboard preview renders in the
+  relevant device's mode (the device page follows that device; both template
+  editors follow the selected Preview Device), so what an admin sees matches
+  what the device shows. See
+  [completed/20260823-2-bit-grayscale-support](completed/20260823-2-bit-grayscale-support.md).
 - Custom Liquid filters: `qrcode`, `qrcode_wifi`
 - Virtual device for previewing templates without physical hardware
 
@@ -45,7 +57,10 @@ A self-hosted backend for [TRMNL](https://trmnl.com) e-ink displays. Physical de
 - Template editor with live preview
 - AI template generator (`/template/:id/generate`): chat with Claude to build or
   revise a template; Claude explores Prometheus/HTTP data with tools, renders
-  proposals (and sees them as images), and the result saves in place. The agent
+  proposals (and sees them as images — the same render the user sees), and the
+  result saves in place. A Preview Device selector picks what it renders
+  against, which also tells Claude whether it has four gray levels or only
+  black and white. The agent
   loop runs in the browser; requests to Claude are proxied through the server,
   which holds each user's API key (the key never reaches the browser) — see
   [completed/20260716-ai-template-generation](completed/20260716-ai-template-generation.md).

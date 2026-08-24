@@ -180,6 +180,22 @@ pub async fn update_device_firmware_updates_enabled(
     Ok(())
 }
 
+// Mechanical mirror of update_device_maximum_compatibility above — same
+// shape, different column. Covered by a characterization round-trip test
+// rather than strict test-first (per development-process.md's allowance for
+// near-verbatim CRUD mirrors).
+pub async fn update_device_supports_2bit_grayscale(
+    device_id: i64,
+    supports_2bit_grayscale: bool,
+) -> Result<(), sqlx::error::Error> {
+    sqlx::query("UPDATE devices SET supports_2bit_grayscale = ? WHERE id = ?")
+        .bind(supports_2bit_grayscale)
+        .bind(device_id)
+        .execute(get())
+        .await?;
+    Ok(())
+}
+
 pub async fn get_device_logs(
     device_id: i64,
     limit: i64,
@@ -254,7 +270,7 @@ pub async fn delete_device(device_id: i64) -> Result<(), sqlx::error::Error> {
 
 pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, supports_2bit_grayscale, last_seen_at, created_at \
          FROM devices
          WHERE id = $1
          ORDER BY last_seen_at DESC"
@@ -266,7 +282,7 @@ pub async fn get_device(device_id: i64) -> Result<Device, sqlx::error::Error> {
 
 pub async fn get_devices() -> Result<Vec<Device>, sqlx::error::Error> {
     sqlx::query_as(
-        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, last_seen_at, created_at \
+        "SELECT id, access_token, mac_address, model, friendly_id, fw_version, width, height, battery_voltage, rssi, template_id, maximum_compatibility, firmware_updates_enabled, supports_2bit_grayscale, last_seen_at, created_at \
          FROM devices ORDER BY last_seen_at DESC"
     )
         .fetch_all(get())
@@ -993,6 +1009,42 @@ mod tests {
             .expect("disable firmware updates");
         let after = get_device(device.id).await.expect("get device after disable");
         assert!(!after.firmware_updates_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_update_device_supports_2bit_grayscale_round_trip() {
+        init_test_db().await;
+
+        let suffix = unique_suffix();
+        let device = create_device(
+            &format!("grayscale-toggle-token-{suffix}"),
+            Some(&format!("aa:bb:cc:dd:gg:{suffix}")),
+            Some("trmnl-og"),
+            &format!("grayscale-toggle-device-{suffix}"),
+            Some("1.0.0"),
+            Some(800),
+            Some(480),
+            Some(3.9),
+            Some("-60"),
+        )
+        .await
+        .expect("create device");
+        assert!(
+            !device.supports_2bit_grayscale,
+            "2-bit grayscale should default off"
+        );
+
+        update_device_supports_2bit_grayscale(device.id, true)
+            .await
+            .expect("enable 2-bit grayscale");
+        let after = get_device(device.id).await.expect("get device after enable");
+        assert!(after.supports_2bit_grayscale);
+
+        update_device_supports_2bit_grayscale(device.id, false)
+            .await
+            .expect("disable 2-bit grayscale");
+        let after = get_device(device.id).await.expect("get device after disable");
+        assert!(!after.supports_2bit_grayscale);
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 
+use crate::frontend::components::PreviewDeviceSelector;
 use crate::frontend::pages::template_editor::TemplateVariables;
 use crate::frontend::store::AppStore;
 use crate::models::{RenderContext, RenderContextStoreExt, TemplateStoreExt};
@@ -7,11 +8,10 @@ use crate::models::{RenderContext, RenderContextStoreExt, TemplateStoreExt};
 #[component]
 pub fn TemplateForm(
     mut render_context: WriteStore<RenderContext>,
-    mut selected_device: WriteStore<Option<crate::models::Device>>,
+    selected_device: WriteStore<Option<crate::models::Device>>,
     preview_error: ReadStore<Option<String>>,
 ) -> Element {
     let store = use_context::<AppStore>();
-    let devices = store.devices;
     let mut save_status = use_signal(|| None::<Result<(), String>>);
     let mut copy_status = use_signal(|| None::<Result<(), String>>);
     let mut delete_confirming = use_signal(|| false);
@@ -33,25 +33,8 @@ pub fn TemplateForm(
                             }
                         }
                     }
-                    div { class: "flex items-center gap-3 ml-4",
-                        span { class: "text-sm font-medium text-gray-700 shrink-0", "Preview Device" }
-                        if !devices().is_empty() {
-                            select {
-                                class: "text-sm border border-gray-200 rounded-lg px-2 py-1 text-gray-600",
-                                onchange: move |evt| {
-                                    if let Ok(idx) = evt.value().parse::<usize>() {
-                                        if let Some(d) = devices().get(idx) {
-                                            selected_device.set(Some(d.clone()));
-                                        }
-                                    }
-                                },
-                                for (i, dev) in devices().iter().enumerate() {
-                                    option { value: "{i}", "{dev.friendly_id} ({dev.width}\u{00d7}{dev.height})" }
-                                }
-                            }
-                        } else {
-                            span { class: "text-xs text-gray-400", "Virtual Device (800\u{00d7}480)" }
-                        }
+                    div { class: "ml-4",
+                        PreviewDeviceSelector { selected_device }
                     }
                 }
 

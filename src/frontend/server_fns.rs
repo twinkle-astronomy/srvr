@@ -197,6 +197,7 @@ native_test_stubs! {
     pub async fn update_device_template(i64, i64) -> ();
     pub async fn update_device_maximum_compatibility(i64, bool) -> ();
     pub async fn update_device_firmware_updates_enabled(i64, bool) -> ();
+    pub async fn update_device_supports_2bit_grayscale(i64, bool) -> ();
     pub async fn get_render_context(i64) -> RenderContext;
     pub async fn get_render_context_for_template(i64, i64) -> RenderContext;
     pub async fn get_screen_preview(i64) -> String;
@@ -211,7 +212,6 @@ native_test_stubs! {
     pub async fn copy_template(i64) -> Template;
     pub async fn get_virtual_render_context(i64) -> RenderContext;
     pub async fn get_template_preview(RenderContext) -> String;
-    pub async fn get_template_preview_png(RenderContext) -> String;
     pub async fn get_template_context(RenderContext) -> Vec<TemplateVar>;
     // Prometheus
     pub async fn get_prometheus_queries_for_template(i64) -> Vec<PrometheusQuery>;

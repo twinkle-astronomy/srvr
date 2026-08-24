@@ -285,6 +285,7 @@ pub fn DeviceDetail(id: i64) -> Element {
                         }
                         MaxCompatibilityToggle { device_id: device.id, current_value: device.maximum_compatibility }
                         FirmwareUpdatesToggle { device_id: device.id, current_value: device.firmware_updates_enabled }
+                        GrayscaleToggle { device_id: device.id, current_value: device.supports_2bit_grayscale }
                     }
 
                     div { class: "bg-white rounded-xl shadow-sm border border-gray-100 p-6",
@@ -293,7 +294,7 @@ pub fn DeviceDetail(id: i64) -> Element {
                             Some(Ok(b64)) if !b64.is_empty() => rsx! {
                                 img {
                                     class: "w-full rounded border border-gray-100",
-                                    src: "data:image/bmp;base64,{b64}",
+                                    src: "data:image/png;base64,{b64}",
                                     alt: "Screen preview",
                                 }
                             },
@@ -783,6 +784,52 @@ fn FirmwareUpdatesToggle(device_id: i64, current_value: bool) -> Element {
             }
             p { class: "text-xs text-gray-400 mt-2",
                 "Opt this device into OTA updates. When enabled, it picks up whatever release is active for its model on its next poll."
+            }
+        }
+    }
+}
+
+#[component]
+fn GrayscaleToggle(device_id: i64, current_value: bool) -> Element {
+    let store = use_context::<AppStore>();
+    let mut checked = use_signal(move || current_value);
+    let mut save_status = use_signal(|| None::<Result<(), String>>);
+
+    rsx! {
+        div { class: "mt-4 pt-4 border-t border-gray-100",
+            h2 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3", "2-bit Grayscale" }
+            div { class: "flex items-center gap-3",
+                label { class: "relative inline-flex items-center cursor-pointer",
+                    input {
+                        r#type: "checkbox",
+                        class: "sr-only peer",
+                        checked: checked(),
+                        onchange: move |evt| {
+                            let val = evt.checked();
+                            checked.set(val);
+                            save_status.set(None);
+                            spawn(async move {
+                                match store.update_device_supports_2bit_grayscale(device_id, val).await {
+                                    Ok(()) => save_status.set(Some(Ok(()))),
+                                    Err(e) => save_status.set(Some(Err(e.to_string()))),
+                                }
+                            });
+                        },
+                    }
+                    div { class: "w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-gray-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gray-900" }
+                }
+                match save_status() {
+                    Some(Ok(())) => rsx! {
+                        span { class: "text-sm text-green-600", "Saved!" }
+                    },
+                    Some(Err(e)) => rsx! {
+                        span { class: "text-sm text-red-500", "Error: {e}" }
+                    },
+                    None => rsx! {},
+                }
+            }
+            p { class: "text-xs text-gray-400 mt-2",
+                "Enable for devices with firmware v1.6+ that support true 4-level grayscale. Serves a 2-bit PNG instead of the 1-bit BMP."
             }
         }
     }
