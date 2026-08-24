@@ -104,6 +104,27 @@ fn get_effective_host(headers: &HeaderMap) -> Cow<'_, str> {
     )
 }
 
+/// Scheme for signed device URLs. `TLS_ENABLED` only reflects whether this
+/// process terminates TLS itself (see `tls.rs`) — behind a reverse proxy
+/// (k8s ingress, Traefik, etc.) that terminates TLS in front of us, this
+/// process only ever sees plain HTTP, so an `X-Forwarded-Proto: https` from
+/// the proxy takes priority. Building an `http://` image_url in that setup
+/// makes the device fetch an HTTP URL the proxy then redirects to HTTPS —
+/// the device doesn't follow that, and firmware logs "It is not a BMP file".
+fn get_effective_scheme(headers: &HeaderMap) -> &'static str {
+    if let Some(proto) = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+    {
+        return if proto == "https" { "https" } else { "http" };
+    }
+    if *TLS_ENABLED.get().unwrap_or(&false) {
+        "https"
+    } else {
+        "http"
+    }
+}
+
 async fn connection_close(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
     res.headers_mut().insert(
@@ -237,11 +258,7 @@ async fn display_handler(headers: HeaderMap) -> impl IntoResponse {
     // Add timestamp for cache busting and device dimensions
     let real_clock = RealClock;
     let timestamp = real_clock.now_secs();
-    let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
-        "https"
-    } else {
-        "http"
-    };
+    let scheme = get_effective_scheme(&headers);
 
     // Generate HMAC signature for the image URL
     let secret = crate::hmac::signing_secret();
@@ -397,11 +414,7 @@ async fn setup_handler(headers: HeaderMap) -> impl IntoResponse {
     // Add timestamp for cache busting and device dimensions
     let real_clock = RealClock;
     let timestamp = real_clock.now_secs();
-    let scheme = if *TLS_ENABLED.get().unwrap_or(&false) {
-        "https"
-    } else {
-        "http"
-    };
+    let scheme = get_effective_scheme(&headers);
 
     // Generate HMAC signature for the image URL
     let secret = crate::hmac::signing_secret();
@@ -664,6 +677,33 @@ mod tests {
             render_route_for_device(true),
             ("/render/screen_2bit.png", "png")
         );
+    }
+
+    #[test]
+    fn get_effective_scheme_defaults_to_http_with_no_proxy_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(get_effective_scheme(&headers), "http");
+    }
+
+    #[test]
+    fn get_effective_scheme_trusts_x_forwarded_proto_https() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert_eq!(
+            get_effective_scheme(&headers),
+            "https",
+            "a TLS-terminating reverse proxy (k8s ingress, Traefik, ...) must produce \
+             https:// image URLs even though this process itself only speaks plain HTTP \
+             — otherwise the device fetches an http:// URL that the proxy redirects, and \
+             firmware logs 'It is not a BMP file'"
+        );
+    }
+
+    #[test]
+    fn get_effective_scheme_ignores_non_https_x_forwarded_proto() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert_eq!(get_effective_scheme(&headers), "http");
     }
 
     #[test]
